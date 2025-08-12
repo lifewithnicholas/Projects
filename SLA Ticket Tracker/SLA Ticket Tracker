@@ -1,0 +1,63 @@
+from datetime import datetime, timedelta
+
+class Ticket:
+    def __init__(self, ticket_id, description, created_at, sla_hours):
+        self.ticket_id = ticket_id
+        self.description = description
+        self.created_at = created_at
+        self.resolved_at = None
+        self.sla_hours = sla_hours
+        self.met_sla = None  # True/False/None until resolved
+
+    def resolve(self, resolved_at):
+        self.resolved_at = resolved_at
+        self.met_sla = self.check_sla()
+
+    def check_sla(self):
+        if not self.resolved_at:
+            return None
+        time_taken = self.resolved_at - self.created_at
+        return time_taken <= timedelta(hours=self.sla_hours)
+
+    def __repr__(self):
+        return (f"Ticket({self.ticket_id}, SLA met: {self.met_sla}, "
+                f"Resolved: {self.resolved_at})")
+
+
+class TicketTracker:
+    def __init__(self):
+        self.tickets = []
+
+    def add_ticket(self, ticket):
+        self.tickets.append(ticket)
+
+    def resolve_ticket(self, ticket_id, resolved_at):
+        ticket = self.find_ticket(ticket_id)
+        if ticket:
+            ticket.resolve(resolved_at)
+            print(f"Ticket {ticket_id} resolved. SLA met: {ticket.met_sla}")
+        else:
+            print(f"Ticket {ticket_id} not found.")
+
+    def find_ticket(self, ticket_id):
+        return next((t for t in self.tickets if t.ticket_id == ticket_id), None)
+
+    def report(self):
+        for t in self.tickets:
+            status = "Open" if not t.resolved_at else ("Met SLA" if t.met_sla else "Missed SLA")
+            print(f"Ticket {t.ticket_id}: {status}")
+
+
+# Example usage
+tracker = TicketTracker()
+
+# Add new tickets
+tracker.add_ticket(Ticket(1, "Email service down", datetime(2025, 8, 12, 9, 0), sla_hours=4))
+tracker.add_ticket(Ticket(2, "Printer jam", datetime(2025, 8, 12, 10, 0), sla_hours=8))
+
+# Resolve tickets
+tracker.resolve_ticket(1, datetime(2025, 8, 12, 12, 0))  # Met SLA
+tracker.resolve_ticket(2, datetime(2025, 8, 13, 10, 0))  # Missed SLA
+
+# Print report
+tracker.report()
