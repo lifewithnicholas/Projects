@@ -1,0 +1,87 @@
+import sqlite3
+from datetime import date
+
+# Connect to SQLite DB (creates file if not exists)
+conn = sqlite3.connect("bank_sample.db")
+cursor = conn.cursor()
+
+# Create Users table
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Users (
+    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    phone TEXT,
+    address TEXT,
+    created_at DATE NOT NULL
+)
+""")
+
+# Create Accounts table
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Accounts (
+    account_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    account_type TEXT NOT NULL,
+    balance REAL DEFAULT 0.0,
+    currency TEXT NOT NULL,
+    opened_at DATE NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES Users(user_id)
+)
+""")
+
+# Create Transactions table
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Transactions (
+    transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    amount REAL NOT NULL,
+    transaction_date DATE NOT NULL,
+    description TEXT,
+    FOREIGN KEY (account_id) REFERENCES Accounts(account_id)
+)
+""")
+
+# Insert sample users
+users_data = [
+    ("Alice", "Johnson", "alice@example.com", "555-1234", "123 Main St", date(2023, 5, 14)),
+    ("Bob", "Smith", "bob@example.com", "555-5678", "456 Oak Ave", date(2023, 6, 20)),
+    ("Charlie", "Brown", "charlie@example.com", "555-9012", "789 Pine Rd", date(2023, 7, 10)),
+]
+cursor.executemany("""
+INSERT INTO Users (first_name, last_name, email, phone, address, created_at)
+VALUES (?, ?, ?, ?, ?, ?)
+""", users_data)
+
+# Insert sample accounts
+accounts_data = [
+    (1, "Checking", 2500.00, "USD", date(2023, 5, 15)),
+    (1, "Savings", 5000.00, "USD", date(2023, 5, 16)),
+    (2, "Checking", 3000.00, "USD", date(2023, 6, 21)),
+    (3, "Loan", -1500.00, "USD", date(2023, 7, 11)),
+]
+cursor.executemany("""
+INSERT INTO Accounts (user_id, account_type, balance, currency, opened_at)
+VALUES (?, ?, ?, ?, ?)
+""", accounts_data)
+
+# Insert sample transactions
+transactions_data = [
+    (1, "Deposit", 1000.00, date(2023, 5, 20), "Paycheck deposit"),
+    (1, "Withdrawal", -200.00, date(2023, 5, 22), "ATM withdrawal"),
+    (2, "Deposit", 1500.00, date(2023, 6, 1), "Bonus deposit"),
+    (3, "Withdrawal", -500.00, date(2023, 6, 25), "Bill payment"),
+    (4, "Deposit", 2000.00, date(2023, 7, 15), "Loan repayment"),
+]
+cursor.executemany("""
+INSERT INTO Transactions (account_id, type, amount, transaction_date, description)
+VALUES (?, ?, ?, ?, ?)
+""", transactions_data)
+
+# Commit changes and close connection
+conn.commit()
+conn.close()
+
+print("✅ Sample banking database created successfully!")
