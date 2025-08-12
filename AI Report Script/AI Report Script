@@ -1,0 +1,72 @@
+import openai
+import pandas as pd
+import os
+
+# Set your OpenAI API key
+openai.api_key = os.getenv("OPENAI_API_KEY")  # or hardcode your key for testing
+
+def ai_suggest_report_structure(purpose, data_source, output_format):
+    """Use AI to suggest a structure for the report."""
+    prompt = f"""
+    You are an expert data analyst. 
+    The user wants to create a report for: {purpose}.
+    The data source is: {data_source}.
+    The output format should be: {output_format}.
+    Suggest a clear, organized report structure with sections, headings, and descriptions.
+    """
+    
+    response = openai.ChatCompletion.create(
+        model="gpt-4o-mini",  # fast + cost-efficient for structured responses
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.5
+    )
+    return response.choices[0].message["content"].strip()
+
+def fetch_data(source):
+    """Fetch data from the given source (placeholder for now)."""
+    # You can expand this to load from CSV, API, database, etc.
+    if source.lower().endswith(".csv"):
+        return pd.read_csv(source)
+    else:
+        # Dummy dataset for demonstration
+        return pd.DataFrame({
+            "Name": ["Alice", "Bob", "Charlie"],
+            "Sales": [2500, 3000, 1500],
+            "Region": ["North", "South", "East"]
+        })
+
+def save_report(data, format_choice, file_name="automated_report"):
+    """Save report in the chosen format."""
+    if format_choice.lower() == "csv":
+        data.to_csv(f"{file_name}.csv", index=False)
+    elif format_choice.lower() == "excel":
+        data.to_excel(f"{file_name}.xlsx", index=False)
+    elif format_choice.lower() == "json":
+        data.to_json(f"{file_name}.json", orient="records")
+    else:
+        print("Unsupported format — defaulting to CSV.")
+        data.to_csv(f"{file_name}.csv", index=False)
+
+def main():
+    # Step 1: Get user input
+    purpose = input("What is the purpose of the report? ")
+    data_source = input("Where is the data coming from? (File path / API / DB) ")
+    output_format = input("What format do you want? (CSV / Excel / JSON) ")
+
+    # Step 2: Ask AI for report structure
+    print("\n🔍 Suggesting report structure using AI...")
+    structure = ai_suggest_report_structure(purpose, data_source, output_format)
+    print("\nSuggested Report Structure:\n", structure)
+
+    # Step 3: Fetch data
+    print("\n📥 Fetching data...")
+    df = fetch_data(data_source)
+
+    # Step 4: Save report
+    print("\n💾 Saving report...")
+    save_report(df, output_format)
+
+    print("\n✅ Report generated successfully!")
+
+if __name__ == "__main__":
+    main()
