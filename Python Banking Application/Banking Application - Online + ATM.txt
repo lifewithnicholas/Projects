@@ -1,0 +1,154 @@
+import sqlite3
+from datetime import date
+
+DB_NAME = "bank_sample.db"
+
+def connect_db():
+    return sqlite3.connect(DB_NAME)
+
+# --------------------------
+# DATABASE HELPER FUNCTIONS
+# --------------------------
+def get_user_accounts(user_id):
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT account_id, account_type, balance, currency
+        FROM Accounts
+        WHERE user_id = ?
+    """, (user_id,))
+    accounts = cur.fetchall()
+    conn.close()
+    return accounts
+
+def get_account_transactions(account_id):
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT transaction_date, type, amount, description
+        FROM Transactions
+        WHERE account_id = ?
+        ORDER BY transaction_date DESC
+    """, (account_id,))
+    transactions = cur.fetchall()
+    conn.close()
+    return transactions
+
+def update_balance(account_id, amount):
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE Accounts SET balance = balance + ? WHERE account_id = ?", (amount, account_id))
+    conn.commit()
+    conn.close()
+
+def add_transaction(account_id, t_type, amount, description):
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO Transactions (account_id, type, amount, transaction_date, description)
+        VALUES (?, ?, ?, ?, ?)
+    """, (account_id, t_type, amount, date.today(), description))
+    conn.commit()
+    conn.close()
+
+# --------------------------
+# ONLINE BANKING INTERFACE
+# --------------------------
+def online_banking(user_id):
+    while True:
+        print("\n=== Online Banking Menu ===")
+        print("1. View Account Balances")
+        print("2. View Transactions")
+        print("3. Deposit Funds")
+        print("4. Withdraw Funds")
+        print("5. Exit")
+        choice = input("Choose an option: ")
+
+        if choice == "1":
+            accounts = get_user_accounts(user_id)
+            print("\n--- Account Balances ---")
+            for acc in accounts:
+                print(f"Account ID: {acc[0]} | Type: {acc[1]} | Balance: {acc[2]:.2f} {acc[3]}")
+
+        elif choice == "2":
+            acc_id = int(input("Enter Account ID: "))
+            txns = get_account_transactions(acc_id)
+            print("\n--- Recent Transactions ---")
+            for t in txns:
+                print(f"{t[0]} | {t[1]} | {t[2]:.2f} | {t[3]}")
+
+        elif choice == "3":
+            acc_id = int(input("Enter Account ID: "))
+            amount = float(input("Enter deposit amount: "))
+            update_balance(acc_id, amount)
+            add_transaction(acc_id, "Deposit", amount, "Online deposit")
+            print("✅ Deposit successful.")
+
+        elif choice == "4":
+            acc_id = int(input("Enter Account ID: "))
+            amount = float(input("Enter withdrawal amount: "))
+            update_balance(acc_id, -amount)
+            add_transaction(acc_id, "Withdrawal", -amount, "Online withdrawal")
+            print("✅ Withdrawal successful.")
+
+        elif choice == "5":
+            break
+        else:
+            print("Invalid choice. Try again.")
+
+# --------------------------
+# ATM INTERFACE
+# --------------------------
+def atm_interface(user_id):
+    while True:
+        print("\n=== ATM Menu ===")
+        print("1. Check Balance")
+        print("2. Withdraw Cash")
+        print("3. Deposit Cash")
+        print("4. Exit")
+        choice = input("Choose an option: ")
+
+        if choice == "1":
+            accounts = get_user_accounts(user_id)
+            for acc in accounts:
+                print(f"{acc[1]} Account: {acc[2]:.2f} {acc[3]}")
+
+        elif choice == "2":
+            acc_id = int(input("Enter Account ID: "))
+            amount = float(input("Enter withdrawal amount: "))
+            update_balance(acc_id, -amount)
+            add_transaction(acc_id, "Withdrawal", -amount, "ATM withdrawal")
+            print("💵 Please take your cash.")
+
+        elif choice == "3":
+            acc_id = int(input("Enter Account ID: "))
+            amount = float(input("Enter deposit amount: "))
+            update_balance(acc_id, amount)
+            add_transaction(acc_id, "Deposit", amount, "ATM deposit")
+            print("💰 Cash deposited successfully.")
+
+        elif choice == "4":
+            break
+        else:
+            print("Invalid choice. Try again.")
+
+# --------------------------
+# MAIN PROGRAM
+# --------------------------
+def main():
+    print("Welcome to the Bank System")
+    user_id = int(input("Enter your User ID: "))
+    print("\nChoose mode:")
+    print("1. Online Banking")
+    print("2. ATM")
+    mode = input("Enter choice: ")
+
+    if mode == "1":
+        online_banking(user_id)
+    elif mode == "2":
+        atm_interface(user_id)
+    else:
+        print("Invalid mode.")
+
+if __name__ == "__main__":
+    main()
