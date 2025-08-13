@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Payment Successful ✅</h2>
+<p>Thank you! Your payment was processed.</p>
+<a href="{{ url_for('index') }}"><button class="btn" type="button">Make Another Payment</button></a>
+{% endblock %}

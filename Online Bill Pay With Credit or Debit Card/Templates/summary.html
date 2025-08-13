@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Review & Pay</h2>
+<p>Confirm your total and proceed to payment.</p>
+
+<div class="grid">
+  <div class="muted">Description</div><div>{{ description }}</div>
+  <div class="muted">Subtotal</div><div>{{ currency }} {{ "%.2f"|format(subtotal) }}</div>
+  <div class="muted">Tax</div><div>{{ currency }} {{ "%.2f"|format(tax) }}</div>
+  <div class="muted">Shipping</div><div>{{ currency }} {{ "%.2f"|format(shipping) }}</div>
+  <div class="total">Total</div><div class="total">{{ currency }} {{ "%.2f"|format(total) }}</div>
+</div>
+
+<form action="{{ url_for('pay') }}" method="post" style="margin-top:1rem;">
+  <input type="hidden" name="description" value="{{ description }}">
+  <input type="hidden" name="email" value="{{ email }}">
+  <input type="hidden" name="subtotal" value="{{ "%.2f"|format(subtotal) }}">
+  <input type="hidden" name="tax" value="{{ "%.2f"|format(tax) }}">
+  <input type="hidden" name="shipping" value="{{ "%.2f"|format(shipping) }}">
+  <input type="hidden" name="total" value="{{ "%.2f"|format(total) }}">
+  <button class="btn" type="submit">
+    {% if stripe_enabled %}Pay with Card{% else %}Simulate Payment{% endif %}
+  </button>
+  <a href="{{ url_for('index') }}"><button class="btn secondary" type="button">Back</button></a>
+</form>
+
+{% if not stripe_enabled %}
+<div class="notice">
+  Stripe keys not configured – running in <strong>Demo Mode</strong>. No real charge will be made.
+</div>
+{% endif %}
+{% endblock %}

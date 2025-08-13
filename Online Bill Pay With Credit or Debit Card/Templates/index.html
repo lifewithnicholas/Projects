@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Online Bill Pay</h1>
+<p>Enter your bill details. Tax and shipping will be added automatically.</p>
+<form action="{{ url_for('calculate') }}" method="post">
+  <div class="row">
+    <input name="description" placeholder="Bill description (e.g., 'Water utility')" required>
+  </div>
+  <div class="row">
+    <input name="amount" type="number" step="0.01" min="0" placeholder="Amount (e.g., 49.95)" required>
+  </div>
+  <div class="row">
+    <input name="email" type="email" placeholder="Receipt email (optional)">
+  </div>
+  <button class="btn" type="submit">Calculate Total</button>
+</form>
+{% endblock %}
