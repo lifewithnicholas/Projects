@@ -1,0 +1,27 @@
+WITH params AS (
+  SELECT DATE '2000-01-01' AS start_date, DATE '2015-12-31' AS end_date
+),
+sales_in_window AS (
+  SELECT * FROM sales s
+  JOIN params p ON s.sale_date BETWEEN p.start_date AND p.end_date
+  WHERE s.is_new_home = TRUE
+),
+sales_lender_month AS (
+  SELECT
+    DATE_TRUNC('month', sale_date)::date AS month_start,
+    lender,
+    COUNT(*)                       AS sales_count,
+    AVG(sale_price)::numeric(12,2) AS avg_sale_price
+  FROM sales_in_window
+  GROUP BY 1,2
+),
+rates_monthly AS (
+  SELECT DATE_TRUNC('month', rate_date)::date AS month_start,
+         AVG(avg_30yr_fixed)::numeric(5,3) AS avg_30yr_fixed_rate
+  FROM interest_rates
+  GROUP BY 1
+)
+SELECT s.month_start, s.lender, s.sales_count, s.avg_sale_price, r.avg_30yr_fixed_rate
+FROM sales_lender_month s
+LEFT JOIN rates_monthly r USING (month_start)
+ORDER BY s.month_start, s.lender;
