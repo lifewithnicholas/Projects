@@ -1,0 +1,526 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+  CartesianGrid,
+} from "recharts";
+
+// ---- Utilities ----
+const fmtDate = (d) => new Date(d).toLocaleDateString();
+const fmtTime = (d) => new Date(d).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const toISO = (v) => (v ? new Date(v).toISOString() : "");
+const hoursBetween = (startISO, endISO) => {
+  if (!startISO || !endISO) return 0;
+  const start = new Date(startISO);
+  const end = new Date(endISO);
+  let diff = (end.getTime() - start.getTime()) / 36e5; // ms -> hours
+  // If end is before start (crossed midnight), add 24h until positive
+  while (diff < 0) diff += 24;
+  return Math.round(diff * 100) / 100;
+};
+const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+// ---- Storage ----
+const LS_KEY = "sleep-tracker/entries/v1";
+const LS_SETTINGS_KEY = "sleep-tracker/settings/v1";
+
+const loadEntries = () => {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+const saveEntries = (entries) => localStorage.setItem(LS_KEY, JSON.stringify(entries));
+
+const loadSettings = () => {
+  try {
+    const raw = localStorage.getItem(LS_SETTINGS_KEY);
+    return (
+      raw ? JSON.parse(raw) : { goalHours: 8, bedtimeReminder: "22:30", wakeReminder: "07:00", dark: true }
+    );
+  } catch {
+    return { goalHours: 8, bedtimeReminder: "22:30", wakeReminder: "07:00", dark: true };
+  }
+};
+const saveSettings = (s) => localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify(s));
+
+// ---- Types ----
+// entry: { id, bedtimeISO, waketimeISO, quality (1-5), notes, tags: string[] }
+
+// ---- Main App ----
+export default function SleepTrackerApp() {
+  const [entries, setEntries] = useState(() => loadEntries());
+  const [settings, setSettings] = useState(() => loadSettings());
+  const [bedtime, setBedtime] = useState("");
+  const [waketime, setWaketime] = useState("");
+  const [quality, setQuality] = useState(3);
+  const [notes, setNotes] = useState("");
+  const [tags, setTags] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const fileInputRef = useRef(null);
+
+  // Dark mode
+  useEffect(() => {
+    const root = document.documentElement;
+    if (settings.dark) root.classList.add("dark");
+    else root.classList.remove("dark");
+  }, [settings.dark]);
+
+  // Persist
+  useEffect(() => saveEntries(entries), [entries]);
+  useEffect(() => saveSettings(settings), [settings]);
+
+  // Derived
+  const withDurations = useMemo(
+    () =>
+      [...entries]
+        .sort((a, b) => new Date(a.bedtimeISO) - new Date(b.bedtimeISO))
+        .map((e) => ({ ...e, hours: hoursBetween(e.bedtimeISO, e.waketimeISO) })),
+    [entries]
+  );
+  const goal = settings.goalHours;
+
+  const last14 = withDurations.slice(-14).map((e) => ({
+    date: fmtDate(e.bedtimeISO),
+    hours: e.hours,
+    goal,
+  }));
+
+  const stats = useMemo(() => {
+    if (withDurations.length === 0) return { avg: 0, debt: 0, streak: 0 };
+    const avg = withDurations.reduce((s, e) => s + e.hours, 0) / withDurations.length;
+
+    // Sleep debt over last 7 entries vs goal
+    const recent = withDurations.slice(-7);
+    const debt = recent.reduce((s, e) => s + (goal - e.hours), 0);
+
+    // Streak meeting goal
+    let streak = 0;
+    for (let i = withDurations.length - 1; i >= 0; i--) {
+      if (withDurations[i].hours >= goal) streak++;
+      else break;
+    }
+    return { avg, debt, streak };
+  }, [withDurations, goal]);
+
+  // Notifications (simple local reminders while tab is open)
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+    const timers = [];
+    const schedule = (hhmm, label) => {
+      if (!hhmm) return;
+      const [h, m] = hhmm.split(":").map(Number);
+      const now = new Date();
+      const target = new Date();
+      target.setHours(h, m, 0, 0);
+      if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1);
+      const ms = target.getTime() - now.getTime();
+      timers.push(
+        setTimeout(() => {
+          if ("Notification" in window && Notification.permission === "granted") {
+            new Notification(label === "bed" ? "Bedtime reminder" : "Wake reminder", {
+              body: label === "bed" ? "Time to wind down." : "Rise and shine!",
+            });
+          }
+        }, ms)
+      );
+    };
+    schedule(settings.bedtimeReminder, "bed");
+    schedule(settings.wakeReminder, "wake");
+    return () => timers.forEach(clearTimeout);
+  }, [settings.bedtimeReminder, settings.wakeReminder]);
+
+  // Handlers
+  const resetForm = () => {
+    setBedtime("");
+    setWaketime("");
+    setQuality(3);
+    setNotes("");
+    setTags("");
+    setEditingId(null);
+  };
+
+  const handleAdd = (e) => {
+    e.preventDefault();
+    const b = toISO(bedtime);
+    const w = toISO(waketime);
+    if (!b || !w) return alert("Please provide both bedtime and wake time.");
+    const payload = {
+      id: editingId || uid(),
+      bedtimeISO: b,
+      waketimeISO: w,
+      quality: clamp(Number(quality), 1, 5),
+      notes: notes.trim(),
+      tags: tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean),
+    };
+
+    setEntries((prev) => {
+      const others = prev.filter((x) => x.id !== payload.id);
+      return [...others, payload];
+    });
+    resetForm();
+  };
+
+  const handleEdit = (id) => {
+    const e = entries.find((x) => x.id === id);
+    if (!e) return;
+    setEditingId(id);
+    setBedtime(e.bedtimeISO.slice(0, 16));
+    setWaketime(e.waketimeISO.slice(0, 16));
+    setQuality(e.quality);
+    setNotes(e.notes || "");
+    setTags((e.tags || []).join(", "));
+  };
+
+  const handleDelete = (id) => {
+    if (!confirm("Delete this entry?")) return;
+    setEntries((prev) => prev.filter((x) => x.id !== id));
+    if (editingId === id) resetForm();
+  };
+
+  const exportJSON = () => {
+    const blob = new Blob([JSON.stringify(entries, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sleep-entries-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importJSON = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!Array.isArray(data)) throw new Error("Bad file");
+        // Basic validation
+        const sanitized = data
+          .map((e) => ({
+            id: e.id || uid(),
+            bedtimeISO: e.bedtimeISO,
+            waketimeISO: e.waketimeISO,
+            quality: clamp(Number(e.quality) || 3, 1, 5),
+            notes: e.notes || "",
+            tags: Array.isArray(e.tags) ? e.tags : [],
+          }))
+          .filter((e) => e.bedtimeISO && e.waketimeISO);
+        setEntries(sanitized);
+      } catch (err) {
+        alert("Failed to import file.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const insights = useMemo(() => {
+    if (withDurations.length < 3) return [];
+    const arr = withDurations.slice(-14);
+    const avg = arr.reduce((s, e) => s + e.hours, 0) / arr.length;
+    const last = arr[arr.length - 1]?.hours || 0;
+    const tips = [];
+    if (avg < goal - 0.5) tips.push(`You average ${avg.toFixed(1)}h; consider moving bedtime earlier.`);
+    if (last < goal - 1) tips.push("Try a consistent wake time to tighten your rhythm.");
+    const poor = arr.filter((e) => e.quality <= 2).length;
+    if (poor >= 3) tips.push("Quality seems low; limit screens 1h before bed and keep room cool/dark.");
+    return tips;
+  }, [withDurations, goal]);
+
+  return (
+    <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+      <div className="mx-auto max-w-6xl p-6">
+        <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">SleepTracker</h1>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Log sleep, see trends, hit your goal.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSettings((s) => ({ ...s, dark: !s.dark }))}
+              className="rounded-2xl border border-zinc-300 px-3 py-1.5 text-sm shadow-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+            >
+              {settings.dark ? "☾ Dark" : "☀︎ Light"}
+            </button>
+            <button
+              onClick={exportJSON}
+              className="rounded-2xl border border-zinc-300 px-3 py-1.5 text-sm shadow-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+            >
+              Export
+            </button>
+            <label className="cursor-pointer rounded-2xl border border-dashed border-zinc-300 px-3 py-1.5 text-sm shadow-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900">
+              Import
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={(e) => importJSON(e.target.files?.[0])}
+              />
+            </label>
+          </div>
+        </header>
+
+        {/* Top stats */}
+        <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="text-xs text-zinc-500">Average sleep</div>
+            <div className="mt-1 text-3xl font-semibold">{stats.avg.toFixed(1)} h</div>
+          </div>
+          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="text-xs text-zinc-500">7-day sleep debt</div>
+            <div className="mt-1 text-3xl font-semibold">{stats.debt.toFixed(1)} h</div>
+          </div>
+          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="text-xs text-zinc-500">Goal streak</div>
+            <div className="mt-1 text-3xl font-semibold">{stats.streak} day{stats.streak === 1 ? "" : "s"}</div>
+          </div>
+        </section>
+
+        {/* Chart */}
+        <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Last 14 nights</h2>
+            <div className="text-sm text-zinc-500">Goal: {goal} h</div>
+          </div>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={last14} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                <YAxis domain={[0, 12]} tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <ReferenceLine y={goal} strokeDasharray="4 4" />
+                <Line type="monotone" dataKey="hours" dot={true} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+
+        {/* Log form */}
+        <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <h2 className="mb-3 text-lg font-semibold">{editingId ? "Edit entry" : "Add sleep"}</h2>
+          <form onSubmit={handleAdd} className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-sm text-zinc-500">Bedtime</span>
+              <input
+                type="datetime-local"
+                value={bedtime}
+                onChange={(e) => setBedtime(e.target.value)}
+                className="rounded-xl border border-zinc-300 bg-transparent p-2 outline-none focus:border-zinc-500 dark:border-zinc-700"
+                required
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm text-zinc-500">Wake time</span>
+              <input
+                type="datetime-local"
+                value={waketime}
+                onChange={(e) => setWaketime(e.target.value)}
+                className="rounded-xl border border-zinc-300 bg-transparent p-2 outline-none focus:border-zinc-500 dark:border-zinc-700"
+                required
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm text-zinc-500">Quality (1–5)</span>
+              <input
+                type="range"
+                min={1}
+                max={5}
+                value={quality}
+                onChange={(e) => setQuality(e.target.value)}
+                className="accent-zinc-700"
+              />
+              <div className="text-xs text-zinc-500">{quality}</div>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm text-zinc-500">Tags (comma separated)</span>
+              <input
+                type="text"
+                placeholder="travel, caffeine, workout"
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+                className="rounded-xl border border-zinc-300 bg-transparent p-2 outline-none focus:border-zinc-500 dark:border-zinc-700"
+              />
+            </label>
+            <label className="md:col-span-2 flex flex-col gap-1">
+              <span className="text-sm text-zinc-500">Notes</span>
+              <textarea
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="rounded-xl border border-zinc-300 bg-transparent p-2 outline-none focus:border-zinc-500 dark:border-zinc-700"
+                placeholder="How did you feel? Any disruptions?"
+              />
+            </label>
+            <div className="md:col-span-2 flex items-center gap-2">
+              <button
+                type="submit"
+                className="rounded-2xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              >
+                {editingId ? "Save changes" : "Add entry"}
+              </button>
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="rounded-2xl border border-zinc-300 px-4 py-2 text-sm shadow-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </form>
+        </section>
+
+        {/* Entries table */}
+        <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Your entries</h2>
+            <div className="text-sm text-zinc-500">Total: {entries.length}</div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-zinc-500">
+                  <th className="p-2">Date</th>
+                  <th className="p-2">Bedtime</th>
+                  <th className="p-2">Wake</th>
+                  <th className="p-2">Hours</th>
+                  <th className="p-2">Quality</th>
+                  <th className="p-2">Tags</th>
+                  <th className="p-2">Notes</th>
+                  <th className="p-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {withDurations.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-4 text-center text-zinc-500">
+                      No entries yet — add your first above.
+                    </td>
+                  </tr>
+                ) : (
+                  withDurations
+                    .slice()
+                    .reverse()
+                    .map((e) => (
+                      <tr key={e.id} className="border-t border-zinc-200 dark:border-zinc-800">
+                        <td className="p-2">{fmtDate(e.bedtimeISO)}</td>
+                        <td className="p-2">{fmtTime(e.bedtimeISO)}</td>
+                        <td className="p-2">{fmtTime(e.waketimeISO)}</td>
+                        <td className="p-2">{e.hours.toFixed(2)}</td>
+                        <td className="p-2">{e.quality}</td>
+                        <td className="p-2">{(e.tags || []).join(", ")}</td>
+                        <td className="p-2 max-w-[24ch] truncate" title={e.notes}>{e.notes}</td>
+                        <td className="p-2">
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleEdit(e.id)}
+                              className="rounded-xl border border-zinc-300 px-2 py-1 text-xs shadow-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDelete(e.id)}
+                              className="rounded-xl border border-red-300 px-2 py-1 text-xs text-red-600 shadow-sm transition hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* Settings & insights */}
+        <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <h2 className="mb-3 text-lg font-semibold">Goal & reminders</h2>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+                <span className="text-sm text-zinc-500">Daily goal (h)</span>
+                <input
+                  type="number"
+                  step={0.5}
+                  min={4}
+                  max={12}
+                  value={settings.goalHours}
+                  onChange={(e) => setSettings((s) => ({ ...s, goalHours: clamp(Number(e.target.value), 4, 12) }))}
+                  className="w-24 rounded-lg border border-zinc-300 bg-transparent p-2 text-right outline-none focus:border-zinc-500 dark:border-zinc-700"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+                <span className="text-sm text-zinc-500">Bedtime reminder</span>
+                <input
+                  type="time"
+                  value={settings.bedtimeReminder}
+                  onChange={(e) => setSettings((s) => ({ ...s, bedtimeReminder: e.target.value }))}
+                  className="w-36 rounded-lg border border-zinc-300 bg-transparent p-2 text-right outline-none focus:border-zinc-500 dark:border-zinc-700"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+                <span className="text-sm text-zinc-500">Wake reminder</span>
+                <input
+                  type="time"
+                  value={settings.wakeReminder}
+                  onChange={(e) => setSettings((s) => ({ ...s, wakeReminder: e.target.value }))}
+                  className="w-36 rounded-lg border border-zinc-300 bg-transparent p-2 text-right outline-none focus:border-zinc-500 dark:border-zinc-700"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+                <span className="text-sm text-zinc-500">Theme</span>
+                <select
+                  value={settings.dark ? "dark" : "light"}
+                  onChange={(e) => setSettings((s) => ({ ...s, dark: e.target.value === "dark" }))}
+                  className="w-36 rounded-lg border border-zinc-300 bg-transparent p-2 outline-none focus:border-zinc-500 dark:border-zinc-700"
+                >
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
+              </label>
+            </div>
+            <p className="mt-3 text-xs text-zinc-500">
+              Reminders use your browser notifications and only fire while the app is open.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <h2 className="mb-3 text-lg font-semibold">Insights</h2>
+            {insights.length === 0 ? (
+              <p className="text-sm text-zinc-500">Log a few nights to see personalized tips.</p>
+            ) : (
+              <ul className="list-disc space-y-2 pl-5 text-sm">
+                {insights.map((t, i) => (
+                  <li key={i}>{t}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
+
+        <footer className="mt-10 border-t border-zinc-200 pt-4 text-center text-xs text-zinc-500 dark:border-zinc-800">
+          Built with ❤️ — data lives in your browser. Add to Home Screen to use like a native app.
+        </footer>
+      </div>
+    </div>
+  );
+}
