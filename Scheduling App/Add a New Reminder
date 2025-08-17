@@ -1,0 +1,7 @@
+python reminder_app.py add --time "2025-08-17 15:30" --msg "Drink water"
+
+# or relative time:
+python reminder_app.py add --in-minutes 10 --msg "Stretch"
+
+# recurring daily
+python reminder_app.py add --time "09:00" --msg "Morning check" --recurring daily
