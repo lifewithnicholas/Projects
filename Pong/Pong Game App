@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pong — PC</title>
+  <style>
+    :root{
+      --fg:#f2f5f7;
+      --dim:#c8d1d8;
+      --accent:#4ade80;
+      --accent2:#60a5fa;
+      --bg1:#0f172a; /* slate-900 */
+      --bg2:#111827; /* gray-900 */
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: radial-gradient(1200px 800px at 20% 20%, #111827 0%, #0b1220 40%, #030712 100%);
+      color: var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Noto Sans, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      overflow: hidden;
+    }
+    #game { display:block; width:100vw; height:100vh; }
+    .hud { position: fixed; left: 16px; top: 16px; line-height:1.4; user-select:none; }
+    .hud .title { font-weight: 700; letter-spacing: .4px; }
+    .hud .keys { color: var(--dim); font-size: 14px; margin-top: 8px; }
+    .hud kbd { background:#0b1220; border:1px solid #1f2937; border-bottom-color:#111827; padding:2px 6px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; color: var(--fg); }
+    .score { position: fixed; top: 16px; right: 24px; font-size: 28px; letter-spacing: 2px; font-weight: 800; color: var(--accent); text-shadow: 0 0 8px rgba(74,222,128,.35); user-select:none; }
+    .notice { position: fixed; left:50%; top:50%; transform: translate(-50%,-50%); text-align:center; user-select:none; }
+    .notice h1 { margin:0; font-size: clamp(28px, 6vw, 64px); text-shadow: 0 4px 24px rgba(0,0,0,.55); }
+    .notice p { margin:.5rem 0 0; color: var(--dim); }
+    .pill { display:inline-block; margin-top:10px; padding:6px 10px; border-radius:999px; border:1px solid #1f2937; background:#0b1220; color:var(--fg); font-size:12px; }
+    .footer { position: fixed; bottom: 10px; left:50%; transform:translateX(-50%); color: var(--dim); font-size: 12px; opacity:.8; user-select:none; }
+  </style>
+</head>
+<body>
+  <canvas id="game" aria-label="Pong game canvas" role="img"></canvas>
+  <div class="hud" aria-live="polite">
+    <div class="title">PONG — PC</div>
+    <div class="keys">
+      P1: <kbd>W</kbd>/<kbd>S</kbd> · P2: <kbd>↑</kbd>/<kbd>↓</kbd><br/>
+      <kbd>Space</kbd> Pause · <kbd>R</kbd> Reset · <kbd>1</kbd> Solo vs AI · <kbd>2</kbd> 2‑Player<br/>
+      <kbd>+</kbd>/<kbd>-</kbd> Difficulty · <kbd>M</kbd> Mute
+    </div>
+  </div>
+  <div class="score" id="score">0 : 0</div>
+  <div class="notice" id="notice" hidden>
+    <h1 id="noticeTitle">Paused</h1>
+    <p id="noticeBody">Press <kbd>Space</kbd> to resume</p>
+    <span class="pill" id="modePill">2‑Player</span>
+  </div>
+  <div class="footer">Built with HTML5 Canvas. Works offline in any modern desktop browser.</div>
+
+  <script>
+  (function(){
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    // --- Responsive canvas ---
+    function resize(){
+      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      canvas.width = Math.floor(innerWidth * dpr);
+      canvas.height = Math.floor(innerHeight * dpr);
+      canvas.style.width = innerWidth + 'px';
+      canvas.style.height = innerHeight + 'px';
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    addEventListener('resize', resize);
+    resize();
+
+    // --- Game state ---
+    const state = {
+      running: true,
+      singlePlayer: false, // false = 2P, true = P1 vs AI (right paddle is AI)
+      muted: false,
+      difficulty: 1.0, // 0.6 (easy) to ~1.6 (hard)
+      toWin: 11,
+      scores: [0,0],
+      serve: Math.random() < 0.5 ? -1 : 1, // -1 => left serves to right; 1 => right serves to left
+    };
+
+    // --- Audio (tiny synth beeps) ---
+    let audioCtx = null;
+    function initAudio(){
+      if (audioCtx || state.muted) return;
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { audioCtx = null; }
+    }
+    function beep(freq=440, dur=0.05, type='square', gain=0.03){
+      if (!audioCtx || state.muted) return;
+      const t = audioCtx.currentTime;
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(gain, t+0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t); o.stop(t + dur + 0.02);
+    }
+
+    // --- Entities ---
+    const world = {
+      w: () => canvas.width,
+      h: () => canvas.height,
+      padW: 14,
+      padH: 110,
+      padMaxSpeed: 820,
+      ballR: 9,
+      ballSpeed: 520,
+    };
+
+    const p1 = { x: 32, y: innerHeight/2 - world.padH/2, w: world.padW, h: world.padH, vy: 0 };
+    const p2 = { x: () => canvas.width - 32 - world.padW, y: innerHeight/2 - world.padH/2, w: world.padW, h: world.padH, vy: 0 };
+    const ball = { x: canvas.width/2, y: canvas.height/2, r: world.ballR, vx: world.ballSpeed * state.serve, vy: 0 };
+
+    // --- Helpers ---
+    function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+    function resetBall(direction){
+      ball.x = canvas.width/2; ball.y = canvas.height/2;
+      const angle = (Math.random() * 0.6 - 0.3); // -17°..+17°
+      const speed = world.ballSpeed * (0.95 + Math.random()*0.1);
+      ball.vx = Math.cos(angle) * speed * direction;
+      ball.vy = Math.sin(angle) * speed * (Math.random()<0.5?-1:1);
+    }
+
+    function centerPaddles(){
+      p1.y = canvas.height/2 - world.padH/2;
+      p1.vy = 0;
+      const px2 = typeof p2.x === 'function' ? p2.x() : p2.x;
+      p2.y = canvas.height/2 - world.padH/2;
+      p2.vy = 0;
+    }
+
+    // --- Input ---
+    const keys = new Set();
+    addEventListener('keydown', (e)=>{
+      if (["ArrowUp","ArrowDown"," ","r","R","1","2","+","=","-","m","M"].includes(e.key)) e.preventDefault();
+      keys.add(e.key);
+      if (!audioCtx) initAudio();
+      // UI toggles
+      if (e.key === ' ') togglePause();
+      if (e.key === 'r' || e.key === 'R') hardReset();
+      if (e.key === '1') setSingle(true);
+      if (e.key === '2') setSingle(false);
+      if (e.key === '+' || e.key === '=') tweakDifficulty(0.1);
+      if (e.key === '-') tweakDifficulty(-0.1);
+      if (e.key === 'm' || e.key === 'M') { state.muted = !state.muted; }
+    });
+    addEventListener('keyup', (e)=> keys.delete(e.key));
+
+    function setSingle(v){ state.singlePlayer = v; announce(v? 'Single Player (P1 vs AI)' : '2‑Player'); }
+    function tweakDifficulty(d){ state.difficulty = clamp(+state.difficulty + d, 0.6, 1.8); announce(`Difficulty: ${state.difficulty.toFixed(1)}`); }
+
+    // --- UI notice ---
+    const notice = document.getElementById('notice');
+    const noticeTitle = document.getElementById('noticeTitle');
+    const noticeBody = document.getElementById('noticeBody');
+    const modePill = document.getElementById('modePill');
+    function showNotice(title, body){
+      noticeTitle.textContent = title; noticeBody.innerHTML = body; notice.hidden = false; updatePill();
+    }
+    function hideNotice(){ notice.hidden = true; }
+    function updatePill(){ modePill.textContent = state.singlePlayer ? 'Solo vs AI' : '2‑Player'; }
+    function announce(text){ showNotice(text, 'Press <kbd>Space</kbd>'); setTimeout(()=>{ if(state.running) hideNotice(); }, 1200); }
+
+    function togglePause(){
+      state.running = !state.running;
+      if (state.running){ hideNotice(); if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); }
+      else { showNotice('Paused', 'Press <kbd>Space</kbd> to resume'); }
+    }
+
+    function hardReset(){ state.scores = [0,0]; state.serve = Math.random()<0.5?-1:1; resetBall(state.serve); centerPaddles(); updateScore(); announce('Reset'); }
+
+    const scoreEl = document.getElementById('score');
+    function updateScore(){ scoreEl.textContent = state.scores[0] + ' : ' + state.scores[1]; }
+
+    // --- Game loop ---
+    let last = performance.now();
+    resetBall(state.serve);
+    updateScore();
+
+    function step(now){
+      const dt = Math.min(0.033, (now - last) / 1000); // clamp at 33ms
+      last = now;
+      if (state.running) update(dt);
+      draw();
+      requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+
+    function update(dt){
+      // Player input
+      const accel = 2600; // paddle acceleration
+      const drag = 0.0008; // velocity decay
+      const maxV = world.padMaxSpeed * state.difficulty;
+
+      // P1
+      if (keys.has('w') || keys.has('W')) p1.vy -= accel * dt;
+      if (keys.has('s') || keys.has('S')) p1.vy += accel * dt;
+
+      // P2 or AI
+      if (!state.singlePlayer){
+        if (keys.has('ArrowUp')) p2.vy -= accel * dt;
+        if (keys.has('ArrowDown')) p2.vy += accel * dt;
+      } else {
+        // Simple AI: predict target with lead and clamp speed
+        const target = ball.y - world.padH/2 + Math.sign(ball.vy) * 18;
+        const dir = Math.sign(target - p2.y);
+        p2.vy += dir * (accel * 0.75 * state.difficulty) * dt;
+        // add slight wobble so it's beatable
+        p2.vy += Math.sin(performance.now()/180) * 12 * dt;
+      }
+
+      // Apply drag and clamp
+      p1.vy -= p1.vy * drag * Math.abs(p1.vy);
+      p2.vy -= p2.vy * drag * Math.abs(p2.vy);
+      p1.vy = clamp(p1.vy, -maxV, maxV);
+      p2.vy = clamp(p2.vy, -maxV, maxV);
+
+      // Move paddles
+      p1.y = clamp(p1.y + p1.vy * dt, 12, canvas.height - world.padH - 12);
+      const p2x = typeof p2.x === 'function' ? p2.x() : p2.x;
+      p2.y = clamp(p2.y + p2.vy * dt, 12, canvas.height - world.padH - 12);
+
+      // Move ball
+      const speedBoost = 1 + 0.0003; // incremental speed up
+      ball.x += ball.vx * dt; ball.y += ball.vy * dt; ball.vx *= speedBoost; ball.vy *= speedBoost;
+
+      // Collide with top/bottom
+      if (ball.y - ball.r < 0){ ball.y = ball.r; ball.vy = Math.abs(ball.vy); beep(660, 0.03); }
+      if (ball.y + ball.r > canvas.height){ ball.y = canvas.height - ball.r; ball.vy = -Math.abs(ball.vy); beep(660, 0.03); }
+
+      // Collide with paddles
+      const hitLeft = (ball.x - ball.r < p1.x + p1.w) && (ball.y > p1.y) && (ball.y < p1.y + world.padH);
+      const hitRight = (ball.x + ball.r > p2x) && (ball.y > p2.y) && (ball.y < p2.y + world.padH);
+      if (hitLeft && ball.vx < 0){
+        const rel = ((ball.y - (p1.y + world.padH/2)) / (world.padH/2)); // -1..1
+        ball.x = p1.x + p1.w + ball.r + 0.5;
+        ball.vx = Math.abs(ball.vx) * (1.03 + Math.abs(rel)*0.04);
+        ball.vy += (rel * 260 + p1.vy*0.25);
+        beep(520 + Math.abs(rel)*120, 0.035);
+      }
+      if (hitRight && ball.vx > 0){
+        const rel = ((ball.y - (p2.y + world.padH/2)) / (world.padH/2));
+        ball.x = p2x - ball.r - 0.5;
+        ball.vx = -Math.abs(ball.vx) * (1.03 + Math.abs(rel)*0.04);
+        ball.vy += (rel * 260 + p2.vy*0.25);
+        beep(520 + Math.abs(rel)*120, 0.035);
+      }
+
+      // Scoring
+      if (ball.x + ball.r < 0){
+        // Right player scores
+        state.scores[1]++; updateScore(); state.serve = -1; beep(220, 0.12, 'sawtooth', 0.05); pointOrWin();
+      }
+      if (ball.x - ball.r > canvas.width){
+        // Left player scores
+        state.scores[0]++; updateScore(); state.serve = 1; beep(220, 0.12, 'sawtooth', 0.05); pointOrWin();
+      }
+    }
+
+    function pointOrWin(){
+      if (state.scores[0] >= state.toWin || state.scores[1] >= state.toWin){
+        state.running = false;
+        const winner = state.scores[0] > state.scores[1] ? 'Player 1' : (state.singlePlayer ? 'You' : 'Player 2');
+        showNotice(`${winner} wins!`, 'Press <kbd>R</kbd> to restart');
+      } else {
+        resetBall(state.serve);
+        centerPaddles();
+        showNotice('Point!', 'Press <kbd>Space</kbd> to serve');
+      }
+    }
+
+    function draw(){
+      // background
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      // center dashed line
+      const dashH = 12, gap = 14, x = canvas.width/2 - 2;
+      ctx.fillStyle = 'rgba(148,163,184,.35)';
+      for (let y=10; y<canvas.height-10; y+=dashH+gap) ctx.fillRect(x, y, 4, dashH);
+
+      // paddles
+      drawPaddle(p1.x, p1.y, world.padW, world.padH, '#60a5fa');
+      const p2x = (typeof p2.x === 'function') ? p2.x() : p2.x;
+      drawPaddle(p2x, p2.y, world.padW, world.padH, '#34d399');
+
+      // ball
+      ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI*2);
+      ctx.fillStyle = '#e5e7eb'; ctx.fill();
+
+      // subtle glow
+      ctx.shadowColor = 'rgba(255,255,255,.15)'; ctx.shadowBlur = 0;
+    }
+
+    function drawPaddle(x,y,w,h,color){
+      const r = 10;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x+r, y);
+      ctx.lineTo(x+w-r, y);
+      ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+      ctx.lineTo(x+w, y+h-r);
+      ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+      ctx.lineTo(x+r, y+h);
+      ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+      ctx.lineTo(x, y+r);
+      ctx.quadraticCurveTo(x, y, x+r, y);
+      ctx.closePath();
+      ctx.fill();
+
+      // edge shade
+      ctx.fillStyle = 'rgba(0,0,0,.15)';
+      ctx.fillRect(x+w-3, y+3, 3, h-6);
+    }
+
+    // Start paused with a help card
+    state.running = false;
+    showNotice('Ready?', 'Press <kbd>Space</kbd> to serve');
+    updatePill();
+  })();
+  </script>
+</body>
+</html>
