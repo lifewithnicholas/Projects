@@ -1,0 +1,84 @@
+import os
+import time
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+
+# ==============
+# CONFIGURATION
+# ==============
+RESUME_PATH = "resume.pdf"
+COVER_LETTER_PATH = "cover_letter.txt"
+
+# Job search keywords and locations
+SEARCH_KEYWORDS = "Software Engineer"
+SEARCH_LOCATION = "Remote"
+
+# Supported job boards (add login details as needed)
+JOB_BOARDS = {
+    "indeed": "https://www.indeed.com",
+    "linkedin": "https://www.linkedin.com/jobs",
+    "ziprecruiter": "https://www.ziprecruiter.com",
+    "glassdoor": "https://www.glassdoor.com/Job",
+    "careerbuilder": "https://www.careerbuilder.com",
+}
+
+# ==============
+# BROWSER SETUP
+# ==============
+def init_browser():
+    options = webdriver.ChromeOptions()
+    options.add_argument("--start-maximized")
+    driver = webdriver.Chrome(options=options)
+    return driver
+
+# ==============
+# INDEED EXAMPLE
+# ==============
+def apply_indeed(driver):
+    driver.get(JOB_BOARDS["indeed"])
+    time.sleep(2)
+
+    # Enter search criteria
+    search_box = driver.find_element(By.ID, "text-input-what")
+    search_box.send_keys(SEARCH_KEYWORDS)
+
+    location_box = driver.find_element(By.ID, "text-input-where")
+    location_box.clear()
+    location_box.send_keys(SEARCH_LOCATION)
+    location_box.send_keys(Keys.RETURN)
+
+    time.sleep(3)
+    
+    # Click on a job posting (example: first result)
+    jobs = driver.find_elements(By.CLASS_NAME, "result")
+    if jobs:
+        jobs[0].click()
+        time.sleep(2)
+
+        # Look for "Apply Now" button (varies by job)
+        try:
+            apply_button = driver.find_element(By.CLASS_NAME, "ia-IndeedApplyButton")
+            apply_button.click()
+            time.sleep(2)
+
+            # Upload resume
+            upload_resume = driver.find_element(By.XPATH, "//input[@type='file']")
+            upload_resume.send_keys(os.path.abspath(RESUME_PATH))
+
+            # Additional steps would go here...
+        except:
+            print("No quick apply button found.")
+    else:
+        print("No jobs found.")
+
+# ==============
+# MAIN FUNCTION
+# ==============
+if __name__ == "__main__":
+    driver = init_browser()
+    try:
+        apply_indeed(driver)
+        # You can add apply_linkedin(driver), apply_ziprecruiter(driver), etc.
+    finally:
+        driver.quit()
