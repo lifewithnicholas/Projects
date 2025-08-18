@@ -1,0 +1,313 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
+import { Chess } from "chess.js";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Bot, RotateCcw, Undo2, RefreshCw, FlipHorizontal2 } from "lucide-react";
+
+// --- Helper: board squares in algebraic from perspective
+const files = ["a","b","c","d","e","f","g","h"]; // file a..h
+const ranks = ["1","2","3","4","5","6","7","8"]; // 1..8
+
+const unicodePiece = (p) => {
+  if (!p) return "";
+  const map = {
+    p: { w: "♙", b: "♟" },
+    r: { w: "♖", b: "♜" },
+    n: { w: "♘", b: "♞" },
+    b: { w: "♗", b: "♝" },
+    q: { w: "♕", b: "♛" },
+    k: { w: "♔", b: "♚" },
+  };
+  return map[p.type]?.[p.color] ?? "";
+};
+
+function squareName(fileIndex, rankIndex) {
+  return `${files[fileIndex]}${ranks[rankIndex]}`;
+}
+
+function buildSquares(orientation = "w") {
+  // Returns an array of square ids from top-left to bottom-right for rendering
+  const order = [];
+  const rf = orientation === "w" ? [...ranks].reverse() : ranks; // display 8..1 for white at bottom
+  const ff = orientation === "w" ? files : [...files].reverse();
+  for (let r of rf) {
+    for (let f of ff) {
+      order.push(`${f}${r}`);
+    }
+  }
+  return order;
+}
+
+const SquareLabel = ({ sq, orientation }) => {
+  const isFileA = sq[0] === (orientation === "w" ? "a" : "h");
+  const isRank1 = sq[1] === (orientation === "w" ? "1" : "8");
+  return (
+    <div className="absolute inset-0 p-1 text-[10px] md:text-xs text-muted-foreground select-none pointer-events-none">
+      <div className="absolute left-1 top-1 opacity-70">{sq}</div>
+      {isFileA && <div className="absolute left-1 bottom-1 opacity-70">{sq[1]}</div>}
+      {isRank1 && <div className="absolute right-1 top-1 opacity-70">{sq[0]}</div>}
+    </div>
+  );
+};
+
+export default function ChessApp() {
+  const chessRef = useRef(new Chess());
+  const [fen, setFen] = useState(chessRef.current.fen());
+  const [orientation, setOrientation] = useState(/** @type {"w"|"b"} */("w"));
+  const [selected, setSelected] = useState(/** @type {string|null} */(null));
+  const [legalTargets, setLegalTargets] = useState(/** @type {string[]} */([]));
+  const [history, setHistory] = useState(/** @type {string[]} */([]));
+  const [aiOn, setAiOn] = useState(false);
+  const [aiThinking, setAiThinking] = useState(false);
+
+  const game = chessRef.current;
+
+  const makeAIMove = () => {
+    if (game.isGameOver() || game.isDraw()) return;
+    const moves = game.moves({ verbose: true });
+    if (moves.length === 0) return;
+    // very basic: random legal move
+    const idx = Math.floor(Math.random() * moves.length);
+    const mv = moves[idx];
+    game.move({ from: mv.from, to: mv.to, promotion: mv.promotion || "q" });
+    setFen(game.fen());
+    setHistory(game.history());
+  };
+
+  useEffect(() => {
+    if (!aiOn) return;
+    if (game.turn() === (orientation === "w" ? "b" : "w")) {
+      setAiThinking(true);
+      const t = setTimeout(() => {
+        makeAIMove();
+        setAiThinking(false);
+      }, 300);
+      return () => clearTimeout(t);
+    }
+  }, [fen, aiOn]);
+
+  const squares = useMemo(() => buildSquares(orientation), [orientation]);
+
+  const boardMap = useMemo(() => {
+    const m = new Map();
+    squares.forEach((sq) => {
+      const piece = game.get(sq);
+      if (piece) m.set(sq, piece);
+    });
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fen, squares.join("")]);
+
+  const statusText = useMemo(() => {
+    if (game.isCheckmate()) return `Checkmate — ${game.turn() === "w" ? "Black" : "White"} wins`;
+    if (game.isDraw()) return "Draw";
+    if (game.isStalemate?.()) return "Stalemate"; // chess.js v1 compatibility
+    if (game.isCheck()) return `${game.turn() === "w" ? "White" : "Black"} to move — check!`;
+    return `${game.turn() === "w" ? "White" : "Black"} to move`;
+  }, [fen]);
+
+  const onSquareClick = (sq) => {
+    if (selected === sq) {
+      setSelected(null);
+      setLegalTargets([]);
+      return;
+    }
+
+    const piece = game.get(sq);
+    const turnColor = game.turn();
+
+    if (selected) {
+      const move = { from: selected, to: sq, promotion: "q" };
+      const res = game.move(move);
+      if (res) {
+        setFen(game.fen());
+        setHistory(game.history());
+        setSelected(null);
+        setLegalTargets([]);
+        return;
+      }
+      // if illegal, try selecting new square
+    }
+
+    if (piece && piece.color === turnColor) {
+      setSelected(sq);
+      const legal = game.moves({ square: sq, verbose: true }).map((m) => m.to);
+      setLegalTargets(legal);
+    } else {
+      setSelected(null);
+      setLegalTargets([]);
+    }
+  };
+
+  const onDragStart = (e, sq) => {
+    const piece = game.get(sq);
+    if (!piece || piece.color !== game.turn()) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.setData("from", sq);
+    setSelected(sq);
+    const legal = game.moves({ square: sq, verbose: true }).map((m) => m.to);
+    setLegalTargets(legal);
+  };
+
+  const onDrop = (e, to) => {
+    e.preventDefault();
+    const from = e.dataTransfer.getData("from");
+    if (!from) return;
+    const res = game.move({ from, to, promotion: "q" });
+    if (res) {
+      setFen(game.fen());
+      setHistory(game.history());
+      setSelected(null);
+      setLegalTargets([]);
+    }
+  };
+
+  const allowDrop = (e) => {
+    e.preventDefault();
+  };
+
+  const reset = () => {
+    game.reset();
+    setFen(game.fen());
+    setHistory(game.history());
+    setSelected(null);
+    setLegalTargets([]);
+  };
+
+  const undo = () => {
+    game.undo();
+    setFen(game.fen());
+    setHistory(game.history());
+    setSelected(null);
+    setLegalTargets([]);
+  };
+
+  const flip = () => setOrientation((o) => (o === "w" ? "b" : "w"));
+
+  const copyFEN = async () => {
+    try {
+      await navigator.clipboard.writeText(fen);
+    } catch {}
+  };
+
+  return (
+    <div className="min-h-screen w-full bg-background text-foreground p-4 md:p-8">
+      <div className="mx-auto max-w-5xl grid md:grid-cols-[1fr_360px] gap-6 items-start">
+        <Card className="p-3 md:p-4">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center justify-between gap-2 text-xl md:text-2xl">
+              <span>Chess</span>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="icon" onClick={flip} title="Flip board">
+                  <FlipHorizontal2 className="h-5 w-5" />
+                </Button>
+                <Button variant="secondary" size="icon" onClick={undo} title="Undo">
+                  <Undo2 className="h-5 w-5" />
+                </Button>
+                <Button variant="secondary" size="icon" onClick={reset} title="Reset">
+                  <RotateCcw className="h-5 w-5" />
+                </Button>
+              </div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="w-full aspect-square max-w-[min(90vh,100%)] mx-auto select-none">
+              <div className="grid grid-cols-8 grid-rows-8 w-full h-full rounded-2xl overflow-hidden shadow">
+                {squares.map((sq, idx) => {
+                  const isDark = (Math.floor(idx / 8) + (idx % 8)) % 2 === 1;
+                  const piece = boardMap.get(sq);
+                  const isSelected = selected === sq;
+                  const canMoveHere = legalTargets.includes(sq);
+                  const isLastMoveTo = history.length > 0 && history[history.length - 1].includes(sq);
+                  return (
+                    <div
+                      key={sq}
+                      onDrop={(e) => onDrop(e, sq)}
+                      onDragOver={allowDrop}
+                      onClick={() => onSquareClick(sq)}
+                      className={[
+                        "relative flex items-center justify-center text-3xl md:text-5xl",
+                        isDark ? "bg-[rgb(118,150,86)]" : "bg-[rgb(238,238,210)]",
+                        isSelected && "outline outline-4 outline-sky-500/60 z-10",
+                        canMoveHere && !piece && "after:content-[''] after:absolute after:w-4 after:h-4 after:rounded-full after:bg-black/25",
+                        canMoveHere && piece && "outline outline-4 outline-black/25",
+                        isLastMoveTo && "ring-2 ring-yellow-400/70",
+                      ].filter(Boolean).join(" ")}
+                    >
+                      {/* square label */}
+                      <SquareLabel sq={sq} orientation={orientation} />
+
+                      {piece && (
+                        <motion.div
+                          layout
+                          layoutId={`${sq}-${piece.type}-${piece.color}`}
+                          className="w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing"
+                          draggable
+                          onDragStart={(e) => onDragStart(e, sq)}
+                        >
+                          <span
+                            className="drop-shadow-sm"
+                            style={{
+                              // Slight size tweak so pieces fit nicely
+                              lineHeight: 1,
+                              userSelect: "none",
+                            }}
+                          >
+                            {unicodePiece(piece)}
+                          </span>
+                        </motion.div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Button onClick={copyFEN} variant="outline" size="sm" title="Copy FEN">FEN</Button>
+              <Button onClick={() => setAiOn((v) => !v)} size="sm" variant={aiOn ? "destructive" : "default"}>
+                <Bot className="mr-2 h-4 w-4" /> {aiOn ? "Stop AI" : "Play vs AI"}
+              </Button>
+              <div className="text-sm text-muted-foreground ml-auto">{statusText}{aiThinking ? " • AI thinking…" : ""}</div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="p-3 md:p-4">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg">Moves</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ol className="grid grid-cols-2 md:grid-cols-1 gap-y-1 text-sm max-h-[60vh] overflow-auto pr-1">
+              {(() => {
+                const hist = chessRef.current.history({ verbose: true });
+                const pairs = [];
+                for (let i = 0; i < hist.length; i += 2) {
+                  pairs.push([hist[i], hist[i + 1]]);
+                }
+                return pairs.map((pair, idx) => (
+                  <li key={idx} className="flex items-center gap-3">
+                    <span className="text-muted-foreground w-6">{idx + 1}.</span>
+                    <span className="flex-1">{pair[0]?.san ?? ""}</span>
+                    <span className="flex-1">{pair[1]?.san ?? ""}</span>
+                  </li>
+                ));
+              })()}
+            </ol>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <Button onClick={undo} variant="secondary"><Undo2 className="mr-2 h-4 w-4"/>Undo</Button>
+              <Button onClick={reset} variant="secondary"><RotateCcw className="mr-2 h-4 w-4"/>Reset</Button>
+              <Button onClick={flip} variant="secondary" className="col-span-2"><FlipHorizontal2 className="mr-2 h-4 w-4"/>Flip Board</Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+      <footer className="mt-6 text-center text-xs text-muted-foreground">
+        Works on mouse (drag & drop) and touch (tap to select, tap target to move). Powered by chess.js rules.
+      </footer>
+    </div>
+  );
+}
