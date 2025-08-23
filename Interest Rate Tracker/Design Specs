@@ -1,0 +1,61 @@
+# Interest Rate & Loan Cost Tracker – Design Spec
+
+## 1) Goal
+
+Build a production-grade tool for a retail bank to (a) track and forecast interest rates and (b) translate those forecasts into customer-facing affordability metrics for home mortgages and auto loans.
+
+**Primary users**
+
+* Treasury / ALM team (rate risk, funding plans)
+* Consumer lending (pricing, promo planning)
+* Digital product (customer affordability widgets)
+
+**Primary outputs**
+
+* Daily dashboards for current benchmarks and internal rate sheets
+* 1–24 month forecasts with uncertainty bands
+* Scenario engine (shocks, parallel shifts, steepening/flattening)
+* Loan affordability & payment calculators wired to forecasts
+
+## 2) KPIs
+
+* Forecast MAE / RMSE by tenor and product
+* Backtest hit rate for directionality (up/down) over 1, 3, 6 months
+* Quote-to-close conversion lift from affordability widget
+* Latency from data arrival → model update (<30 min target)
+
+## 3) Data Sources (authoritative)
+
+* **FRED**: SOFR (SOFR), Fed Funds Effective (FEDFUNDS), 2Y/10Y Treasury (DGS2, DGS10), 30Y fixed mortgage (MORTGAGE30US), CPI (CPIAUCSL), Unemployment (UNRATE), Retail sales (RSAFS)
+* **ICE / CME**: SOFR futures (for implied path, if licensed)
+* **Internal**: funding costs, deposit betas, rate sheets, booked loan yields
+
+## 4) Architecture
+
+**Ingestion & Validation**
+
+* Batch pulls from FRED API (hourly), SOFR futures (daily), internal S3/warehouse tables (Snowflake/BigQuery).
+* Data contracts: schema + range checks + freshness SLAs via Great Expectations.
+
+**Storage**
+
+* Bronze (raw), Silver (clean, aligned calendar), Gold (features) in Delta Lake or BigQuery.
+
+**Modeling Layer**
+
+* Modular pipelines per target: `fed_funds`, `sofr`, `ust_curve`, `mortgage30`, `auto_apr`.
+* Feature store with lags, calendar effects, macro covariates, futures-implied expectations.
+
+**Serving**
+
+* REST/GraphQL microservice for forecasts & scenarios.
+* Scheduled retrains (daily) + on-demand backtests.
+
+**Observability**
+
+* MLflow for experiments; Evidently AI for drift; Grafana for data/model health.
+
+## 5) Forecasting Approach
+
+* **Nowcasting**: Kalman filter to smooth noisy dailies; ridge regression with lagged features for 1–3m.
+* \*\*Curve modeling
