@@ -1,0 +1,147 @@
+# Interest Rate & Loan Cost Tracker – Design Spec
+
+## 1) Goal
+
+Build a production-grade tool for a retail bank to (a) track and forecast interest rates and (b) translate those forecasts into customer-facing affordability metrics for home mortgages and auto loans.
+
+**Primary users**
+
+* Treasury / ALM team (rate risk, funding plans)
+* Consumer lending (pricing, promo planning)
+* Digital product (customer affordability widgets)
+
+**Primary outputs**
+
+* Daily dashboards for current benchmarks and internal rate sheets
+* 1–24 month forecasts with uncertainty bands
+* Scenario engine (shocks, parallel shifts, steepening/flattening)
+* Loan affordability & payment calculators wired to forecasts
+
+## 2) KPIs
+
+* Forecast MAE / RMSE by tenor and product
+* Backtest hit rate for directionality (up/down) over 1, 3, 6 months
+* Quote-to-close conversion lift from affordability widget
+* Latency from data arrival → model update (<30 min target)
+
+## 3) Data Sources (authoritative)
+
+* **FRED**: SOFR (SOFR), Fed Funds Effective (FEDFUNDS), 2Y/10Y Treasury (DGS2, DGS10), 30Y fixed mortgage (MORTGAGE30US), CPI (CPIAUCSL), Unemployment (UNRATE), Retail sales (RSAFS)
+* **ICE / CME**: SOFR futures (for implied path, if licensed)
+* **Internal**: funding costs, deposit betas, rate sheets, booked loan yields
+
+## 4) Architecture
+
+**Ingestion & Validation**
+
+* Batch pulls from FRED API (hourly), SOFR futures (daily), internal S3/warehouse tables (Snowflake/BigQuery).
+* Data contracts: schema + range checks + freshness SLAs via Great Expectations.
+
+**Storage**
+
+* Bronze (raw), Silver (clean, aligned calendar), Gold (features) in Delta Lake or BigQuery.
+
+**Modeling Layer**
+
+* Modular pipelines per target: `fed_funds`, `sofr`, `ust_curve`, `mortgage30`, `auto_apr`.
+* Feature store with lags, calendar effects, macro covariates, futures-implied expectations.
+
+**Serving**
+
+* REST/GraphQL microservice for forecasts & scenarios.
+* Scheduled retrains (daily) + on-demand backtests.
+
+**Observability**
+
+* MLflow for experiments; Evidently AI for drift; Grafana for data/model health.
+
+## 5) Forecasting Approach
+
+* **Nowcasting**: Kalman filter to smooth noisy dailies; ridge regression with lagged features for 1–3m.
+* **Curve modeling**: Dynamic Nelson–Siegel (DNS) for the UST curve (level/slope/curvature factors).
+* **Product rates**: Spread models: `Mortgage30 ≈ UST10Y + spread(macro, MBS OAS)`; `Auto APR ≈ 3M SOFR + credit_spread(bucket) + margin`.
+* **Ensembles**: Combine ARIMAX / Gradient Boosting / Futures-implied path; stack with constrained blending.
+* **Uncertainty**: Bootstrapped residuals to produce 50/80/95% intervals.
+
+**Forecast horizons**: 1d, 1w, 1m, 3m, 6m, 12m, 24m.
+
+## 6) Scenario Engine
+
+* Deterministic shocks: parallel ±50–200 bps, steepener/flatteners, front-end tilts.
+* Macro linkers: CPI +/- 1% YoY, unemployment shocks, Fed path alternatives (dot-plot mimic).
+* Stress templates: 2020-like risk-off, 2013 taper tantrum, 2008 crisis, 2022 inflation shock.
+
+## 7) Loan Cost / Affordability Module
+
+**Inputs**
+
+* Principal, down payment %, term, rate source (spot/forecast), taxes & insurance add-ons (mortgage), fees, credit tier (auto).
+
+**Outputs**
+
+* Monthly payment (P\&I), total interest, amortization table, break-even refinance rate, DTI helper.
+
+**Formulas**
+
+* Payment: `PMT = r_m * P / (1 - (1 + r_m)^-n)` where `r_m = APR/12`.
+* Amortization schedule: rolling interest/principal split; early payoff supported.
+
+## 8) API (example)
+
+```
+GET /v1/rates/spot?series=mortgage30,ust10y
+GET /v1/rates/forecast?series=sofr&horizon=12m&interval=monthly
+POST /v1/scenario
+{
+  "shocks": {"parallel_bps": 100, "steepener_bps": 30},
+  "apply_to": ["ust_curve", "mortgage30"]
+}
+POST /v1/affordability
+{
+  "product": "mortgage",
+  "principal": 400000,
+  "term_months": 360,
+  "rate_source": {"series": "mortgage30", "horizon_months": 12}
+}
+```
+
+## 9) Data Model (warehouse)
+
+**Tables**
+
+* `rates_raw(source, series, dt, value)`
+* `rates_aligned(series, ds, value, calendar)`
+* `features(series, ds, f1...fk)`
+* `forecasts(series, ds, horizon_m, point, p50, p80_lo, p80_hi, p95_lo, p95_hi, model_id)`
+* `loan_quotes(id, product, inputs_json, results_json, created_at)`
+
+Indexes on `(series, ds)`; partition by date.
+
+## 10) UI Sketch (web)
+
+* **Top**: current benchmarks & spreads, spark lines.
+* **Center**: interactive chart (history + forecast bands) with scenario toggles.
+* **Right**: loan calculator that binds to selected forecast month.
+* **Bottom**: tables (CSV export) and backtest cards.
+
+## 11) Security & Compliance
+
+* PII avoidance; all inputs anonymized; SOC2 controls.
+* Feature store/forecasts are read-only behind service account.
+* Rate forecasts labeled as estimates with range; no individual credit decisioning.
+
+## 12) Testing
+
+* Unit tests for formulas; time-series cross-validation (rolling origin).
+* Backtest harness with expanding window; benchmark vs naive (random walk, no-change).
+
+## 13) Deployment
+
+* Batch jobs on Airflow; model serving on FastAPI + autoscaling.
+* Infra as code (Terraform); blue/green deploys; model version pinning.
+
+## 14) Roadmap
+
+* **v0.1**: MVP data pulls, baseline model, loan calculator, CSV exports.
+* **v0.2**: Scenario engine, uncertainty bands, UI polish.
+* **v1.0**: Curve modeling, futures integration, A/B-tested customer widget.
