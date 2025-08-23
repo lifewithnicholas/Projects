@@ -1,0 +1,13 @@
+for record in raw_records:
+    rid = upsert_respondent(record)
+    for q in questionnaire:
+        raw = extract_raw_answer(record, q)
+        if q.type in ('single','multi'):
+            labels = normalize_to_list(raw)   # split or pick one
+            for label in labels:
+                choice_id = upsert_choice(q.id, label_raw=label, label_canon=canon(label))
+                insert_response(rid, q.id, choice_id=choice_id)
+        elif q.type == 'numeric':
+            insert_response(rid, q.id, value_numeric=parse_number(raw))
+        elif q.type == 'free_text':
+            insert_response(rid, q.id, value_text=raw)

@@ -1,0 +1,12 @@
+-- Example: seed a few techs and synonyms
+INSERT INTO tech(name, synonyms, category)
+VALUES
+ ('JavaScript', ARRAY['js','javascript','ecmascript'],'language'),
+ ('C#', ARRAY['c sharp','c-sharp'],'language'),
+ ('PostgreSQL', ARRAY['postgres','postgresql','psql'],'db');
+
+-- Canonicalize choice labels by joining to tech
+UPDATE choice c
+SET label_canon = t.name
+FROM tech t
+WHERE lower(c.label_raw) = ANY (SELECT lower(s) FROM unnest(t.synonyms || ARRAY[t.name]) s);

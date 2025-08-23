@@ -1,0 +1,73 @@
+-- Respondents & surveys
+CREATE TABLE survey (
+  survey_id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  wave_date DATE NOT NULL,
+  source TEXT
+);
+
+CREATE TABLE respondent (
+  respondent_id BIGSERIAL PRIMARY KEY,
+  survey_id INT NOT NULL REFERENCES survey(survey_id),
+  external_key TEXT,              -- if the raw data has an id
+  country TEXT,
+  experience_years NUMERIC(4,1),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (survey_id, external_key)
+);
+
+-- Questions & answer dictionaries
+CREATE TABLE question (
+  question_id SERIAL PRIMARY KEY,
+  survey_id INT NOT NULL REFERENCES survey(survey_id),
+  code TEXT NOT NULL,             -- e.g. Q5
+  text TEXT NOT NULL,
+  qtype TEXT NOT NULL CHECK (qtype IN ('single','multi','numeric','free_text')),
+  position INT
+);
+
+CREATE TABLE choice (
+  choice_id SERIAL PRIMARY KEY,
+  question_id INT NOT NULL REFERENCES question(question_id) ON DELETE CASCADE,
+  label_raw TEXT NOT NULL,        -- as it appeared in the raw data
+  label_canon TEXT NOT NULL       -- normalized value (e.g., "JavaScript")
+);
+
+-- Normalized responses (works for any qtype)
+CREATE TABLE response (
+  respondent_id BIGINT NOT NULL REFERENCES respondent(respondent_id) ON DELETE CASCADE,
+  question_id   INT NOT NULL REFERENCES question(question_id) ON DELETE CASCADE,
+  choice_id     INT NULL REFERENCES choice(choice_id),
+  value_numeric NUMERIC NULL,     -- for numeric answers
+  value_text    TEXT NULL,        -- for free-text answers
+  PRIMARY KEY (respondent_id, question_id, choice_id)   -- for multi-select, choice_id differs
+);
+
+-- Optional NLP enrichment for free text answers
+CREATE TABLE response_nlp (
+  respondent_id BIGINT NOT NULL,
+  question_id   INT NOT NULL,
+  key TEXT NOT NULL,              -- 'sentiment','topic','entity','language','keyword'
+  value TEXT NOT NULL,
+  score NUMERIC,
+  PRIMARY KEY (respondent_id, question_id, key, value),
+  FOREIGN KEY (respondent_id, question_id)
+    REFERENCES response(respondent_id, question_id) ON DELETE CASCADE
+);
+
+-- Tech entity dictionary (maps messy spellings to canonical)
+CREATE TABLE tech (
+  tech_id SERIAL PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,      -- canonical: "JavaScript"
+  synonyms TEXT[] DEFAULT '{}',   -- ["JS","Javascript","ECMAScript"]
+  category TEXT                   -- "language","framework","db","tool"
+);
+
+-- Link table when free text mentions tech
+CREATE TABLE response_tech_mention (
+  respondent_id BIGINT NOT NULL,
+  question_id INT NOT NULL,
+  tech_id INT NOT NULL REFERENCES tech(tech_id),
+  mention TEXT,                   -- the actual matched string
+  PRIMARY KEY (respondent_id, question_id, tech_id)
+);

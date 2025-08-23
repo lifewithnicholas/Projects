@@ -1,0 +1,5 @@
+CREATE TABLE stg_raw (
+  payload JSONB,                  -- one row per respondent or per line
+  loaded_at TIMESTAMPTZ DEFAULT now(),
+  source TEXT
+);

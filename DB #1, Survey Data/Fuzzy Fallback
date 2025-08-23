@@ -1,0 +1,19 @@
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- pick best guess for unmapped choices
+WITH cand AS (
+  SELECT c.choice_id, t.name, similarity(lower(c.label_raw), lower(t.name)) AS sim
+  FROM choice c
+  CROSS JOIN tech t
+  WHERE c.label_canon = c.label_raw                      -- not yet mapped
+)
+UPDATE choice c
+SET label_canon = cand.name
+FROM (
+  SELECT choice_id, name FROM (
+    SELECT choice_id, name, sim,
+           ROW_NUMBER() OVER (PARTITION BY choice_id ORDER BY sim DESC) AS rn
+    FROM cand
+  ) x WHERE rn = 1 AND sim >= 0.7
+) cand
+WHERE c.choice_id = cand.choice_id;
