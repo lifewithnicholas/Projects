@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS report_run_log (
+  run_id          BIGSERIAL PRIMARY KEY,
+  report_name     TEXT NOT NULL,
+  from_date       DATE NOT NULL,
+  to_date         DATE NOT NULL,
+  row_count       BIGINT,
+  ran_at_utc      TIMESTAMPTZ DEFAULT NOW(),
+  ran_by          TEXT
+);
