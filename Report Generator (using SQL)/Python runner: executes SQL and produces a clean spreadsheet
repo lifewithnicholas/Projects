@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""
+report_generator.py
+Usage:
+  python report_generator.py --from 2025-01-01 --to 2025-02-01 --out orders_report.xlsx
+
+ENV VARS (set one of these styles):
+  # Example for PostgreSQL
+  DB_URL=postgresql+psycopg2://user:pass@host:5432/dbname
+
+  # Example for SQL Server (ODBC)
+  DB_URL=mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BODBC+Driver+18+for+SQL+Server%7D%3BSERVER%3Dserver%2C1433%3BDATABASE%3Ddb%3BUID%3Duser%3BPWD%3Dpass%3BEncrypt%3Dyes%3BTrustServerCertificate%3Dyes%3B
+
+Dependencies:
+  pip install pandas sqlalchemy openpyxl psycopg2-binary pyodbc  # as needed for your DB
+"""
+import argparse
+import os
+from datetime import datetime, date
+import pandas as pd
+from sqlalchemy import create_engine, text
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Run SQL report and export to Excel.")
+    p.add_argument("--from", dest="from_date", required=True, help="Inclusive start date (YYYY-MM-DD)")
+    p.add_argument("--to", dest="to_date", required=True, help="Exclusive end date (YYYY-MM-DD)")
+    p.add_argument("--sql", default="report.sql", help="Path to SQL file (default: report.sql)")
+    p.add_argument("--out", default="report.xlsx", help="Output Excel file path")
+    return p.parse_args()
+
+def read_sql(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+def to_excel_autosize(df: pd.DataFrame, path: str):
+    # Write with openpyxl to enable styling
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        sheet_name = "Report"
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+
+        wb = writer.book
+        ws = writer.sheets[sheet_name]
+
+        # Freeze header row and add filters
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+
+        # Date/time formatting for any datetime-like columns
+        date_cols = []
+        for idx, col in enumerate(df.columns, start=1):
+            series = df[col]
+            if pd.api.types.is_datetime64_any_dtype(series):
+                date_cols.append(idx)
+
+        date_style = "yyyy-mm-dd hh:mm"
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for idx in date_cols:
+                cell = row[idx-1]
+                cell.number_format = date_style
+
+        # Autosize columns by max content length
+        from openpyxl.utils import get_column_letter
+        for i, col in enumerate(df.columns, start=1):
+            max_len = max((len(str(x)) if x is not None else 0 for x in [col] + df[col].tolist()))
+            ws.column_dimensions[get_column_letter(i)].width = min(max(10, max_len + 2), 60)
+
+        # Optional: bold header
+        for cell in ws[1]:
+            cell.font = cell.font.copy(bold=True)
+
+def main():
+    args = parse_args()
+    db_url = os.getenv("DB_URL")
+    if not db_url:
+        raise SystemExit("Please set DB_URL environment variable (SQLAlchemy URL).")
+
+    # Validate dates early
+    try:
+        from_dt = datetime.fromisoformat(args.from_date).date()
+        to_dt   = datetime.fromisoformat(args.to_date).date()
+        assert from_dt < to_dt, "--from must be earlier than --to"
+    except Exception as e:
+        raise SystemExit(f"Invalid date(s): {e}")
+
+    sql_text = read_sql(args.sql)
+
+    # Create engine and execute with bound params
+    engine = create_engine(db_url, future=True)
+    with engine.connect() as conn:
+        df = pd.read_sql_query(
+            text(sql_text),
+            conn,
+            params={"from_date": str(from_dt), "to_date": str(to_dt)}
+        )
+
+    # Optional: secondary polish in pandas if needed (example: ensure column order)
+    # df = df[[...]]  # already handled in SQL
+
+    to_excel_autosize(df, args.out)
+    print(f"Wrote {len(df):,} rows to {args.out}")
+
+if __name__ == "__main__":
+    main()
