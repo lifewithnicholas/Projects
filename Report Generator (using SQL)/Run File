@@ -1,0 +1,9 @@
+# 1) Put report.sql and report_generator.py in the same folder
+# 2) Install deps
+pip install pandas sqlalchemy openpyxl psycopg2-binary pyodbc
+
+# 3) Set your database URL (pick the right one)
+export DB_URL="postgresql+psycopg2://user:pass@host:5432/dbname"
+
+# 4) Run it
+python report_generator.py --from 2025-01-01 --to 2025-02-01 --out orders_report.xlsx
