@@ -1,0 +1,128 @@
+-- report.sql
+-- Parameters to replace: :from_date, :to_date
+-- Tables to adapt: fact_orders, dim_customers, dim_products, dim_status
+
+WITH base AS (
+  SELECT
+    o.order_id,
+    o.customer_id,
+    o.product_id,
+    o.order_ts AT TIME ZONE 'UTC' AS order_ts_utc,       -- normalize timezone
+    o.status_code,
+    o.qty,
+    o.unit_price,
+    o.currency_code,
+    o.source_system,
+    o.inserted_at,
+    o.updated_at
+  FROM fact_orders o
+  WHERE o.order_ts >= :from_date
+    AND o.order_ts <  :to_date
+),
+
+-- Deduplicate by most recent update per natural key
+dedup AS (
+  SELECT DISTINCT ON (order_id)
+    order_id, customer_id, product_id, order_ts_utc, status_code,
+    qty, unit_price, currency_code, source_system, inserted_at, updated_at
+  FROM base
+  ORDER BY order_id, updated_at DESC
+),
+
+-- Join dimensions
+joined AS (
+  SELECT
+    d.order_id,
+    d.customer_id,
+    c.customer_external_id,
+    INITCAP(TRIM(c.first_name)) AS customer_first_name,
+    INITCAP(TRIM(c.last_name))  AS customer_last_name,
+    LOWER(TRIM(c.email))        AS customer_email,
+    c.country_code              AS customer_country_code,
+
+    d.product_id,
+    p.product_sku,
+    p.product_name,
+    p.category_name,
+
+    d.order_ts_utc,
+    d.status_code,
+    d.qty,
+    d.unit_price,
+    d.currency_code,
+    d.source_system
+  FROM dedup d
+  LEFT JOIN dim_customers c ON c.customer_id = d.customer_id
+  LEFT JOIN dim_products  p ON p.product_id  = d.product_id
+),
+
+-- Map codes to friendly text (or join a dim_status table if you have one)
+labeled AS (
+  SELECT
+    j.*,
+    COALESCE(s.status_label,
+      CASE j.status_code
+        WHEN 'NEW'  THEN 'New'
+        WHEN 'PROC' THEN 'Processing'
+        WHEN 'SHIP' THEN 'Shipped'
+        WHEN 'CANC' THEN 'Cancelled'
+        WHEN 'COMP' THEN 'Completed'
+        ELSE 'Unknown'
+      END
+    ) AS status_label
+  FROM joined j
+  LEFT JOIN dim_status s ON s.status_code = j.status_code
+),
+
+-- Compute meaningful metrics
+metrics AS (
+  SELECT
+    l.*,
+    (l.qty * l.unit_price)::numeric(18,2) AS line_amount,
+
+    -- Customer metrics
+    MIN(l.order_ts_utc) OVER (PARTITION BY l.customer_id) AS customer_first_order_ts,
+    MAX(l.order_ts_utc) OVER (PARTITION BY l.customer_id) AS customer_last_order_ts,
+    COUNT(*)           OVER (PARTITION BY l.customer_id) AS customer_order_count,
+
+    -- Order age (days)
+    DATE_PART('day', CURRENT_TIMESTAMP - l.order_ts_utc)::int AS order_age_days,
+
+    -- Value buckets
+    CASE
+      WHEN (l.qty * l.unit_price) <  50 THEN 'Under $50'
+      WHEN (l.qty * l.unit_price) < 200 THEN '$50–$199'
+      WHEN (l.qty * l.unit_price) < 500 THEN '$200–$499'
+      ELSE '$500+'
+    END AS amount_bucket
+  FROM labeled l
+),
+
+final AS (
+  SELECT
+    -- Clean spreadsheet-friendly headers
+    order_id                                     AS "Order ID",
+    customer_external_id                         AS "Customer ID",
+    customer_first_name || ' ' || customer_last_name AS "Customer Name",
+    customer_email                               AS "Customer Email",
+    customer_country_code                        AS "Customer Country",
+    product_sku                                  AS "Product SKU",
+    product_name                                 AS "Product Name",
+    category_name                                AS "Category",
+    order_ts_utc                                 AS "Order Timestamp (UTC)",
+    status_label                                 AS "Status",
+    qty                                          AS "Qty",
+    unit_price                                   AS "Unit Price",
+    currency_code                                AS "Currency",
+    (qty * unit_price)::numeric(18,2)            AS "Line Amount",
+    amount_bucket                                AS "Amount Bucket",
+    customer_first_order_ts                      AS "Customer First Order",
+    customer_last_order_ts                       AS "Customer Last Order",
+    (customer_order_count > 1)                   AS "Repeat Customer?",
+    source_system                                AS "Source System",
+    order_age_days                               AS "Order Age (days)"
+  FROM metrics
+)
+
+SELECT * FROM final
+ORDER BY "Order Timestamp (UTC)" DESC, "Order ID";
