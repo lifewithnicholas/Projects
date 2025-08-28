@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pong</title>
+  <style>
+    :root {
+      --bg: #0b0f12;
+      --fg: #e8f0ff;
+      --accent: #5eead4;
+      --muted: #8b9bb3;
+    }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    .wrap { display: grid; place-items: center; height: 100%; gap: 16px; padding: 16px; }
+    .hud { display:flex; align-items:center; gap: 12px; flex-wrap: wrap; justify-content:center; }
+    .btn { appearance: none; border: 1px solid #223; background: #121820; color: var(--fg); padding: 8px 12px; border-radius: 999px; cursor: pointer; font-weight: 600; }
+    .btn:hover { border-color: var(--accent); box-shadow: 0 0 0 2px #0b1d1a inset; }
+    .label { color: var(--muted); font-size: 14px; }
+    canvas { background: radial-gradient(1200px 600px at 50% 0%, #0f1621 0%, #0b0f12 60%); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.06); max-width: 100%; height: auto; }
+    .footer { font-size: 12px; color: var(--muted); opacity:.9 }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background:#111826; border:1px solid #253047; border-bottom-width:3px; padding:2px 6px; border-radius:6px; color:#dbe7ff }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hud">
+      <button id="toggleMode" class="btn" title="Toggle Single-Player / Two-Player">Mode: <span id="modeLabel">Single (vs AI)</span></button>
+      <button id="resetBtn" class="btn">Reset</button>
+      <span class="label">Controls: <span class="kbd">W/S</span> (Left) · <span class="kbd">↑/↓</span> (Right) · <span class="kbd">Space</span> (Pause)</span>
+    </div>
+    <canvas id="game" width="960" height="540" aria-label="Pong game" role="img"></canvas>
+    <div class="footer">First to 11 wins · Made for keyboard on desktop</div>
+  </div>
+
+  <script>
+    // --- Utility: simple beep using WebAudio ---
+    class Beeper {
+      constructor() {
+        this.actx = null;
+      }
+      _ctx() { return this.actx ||= new (window.AudioContext || window.webkitAudioContext)(); }
+      beep(freq = 600, dur = 0.06, type = 'square', gain = 0.02) {
+        try {
+          const ctx = this._ctx();
+          const o = ctx.createOscillator();
+          const g = ctx.createGain();
+          o.type = type; o.frequency.value = freq;
+          g.gain.value = gain; o.connect(g); g.connect(ctx.destination);
+          const t = ctx.currentTime; o.start(t); o.stop(t + dur);
+        } catch { /* ignore audio errors */ }
+      }
+    }
+
+    // --- Game constants ---
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const beeper = new Beeper();
+
+    const WIDTH = canvas.width;
+    const HEIGHT = canvas.height;
+
+    const PADDLE_W = 14, PADDLE_H = 90, PADDLE_SPEED = 480; // px/sec
+    const BALL_SIZE = 12;
+    const BALL_SPEED_START = 360;
+    const BALL_SPEED_MAX = 840;
+    const BALL_ACCEL = 1.03; // speed up per paddle hit
+
+    let leftScore = 0, rightScore = 0, playing = true;
+    let twoPlayer = false;
+
+    const state = {
+      ball: { x: WIDTH/2, y: HEIGHT/2, vx: BALL_SPEED_START, vy: 0, speed: BALL_SPEED_START },
+      left: { x: 24, y: HEIGHT/2 - PADDLE_H/2 },
+      right: { x: WIDTH - 24 - PADDLE_W, y: HEIGHT/2 - PADDLE_H/2 },
+    };
+
+    const keys = new Set();
+    addEventListener('keydown', (e) => { keys.add(e.key.toLowerCase()); if (e.key === ' ') { e.preventDefault(); togglePause(); }});
+    addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+
+    // UI buttons
+    const modeBtn = document.getElementById('toggleMode');
+    const modeLabel = document.getElementById('modeLabel');
+    modeBtn.addEventListener('click', () => {
+      twoPlayer = !twoPlayer;
+      modeLabel.textContent = twoPlayer ? 'Two-Player' : 'Single (vs AI)';
+      centerBall(Math.random() < 0.5 ? -1 : 1);
+    });
+    document.getElementById('resetBtn').addEventListener('click', resetGame);
+
+    function togglePause(){ playing = !playing; }
+
+    function resetGame(){
+      leftScore = 0; rightScore = 0; playing = true;
+      state.left.y = HEIGHT/2 - PADDLE_H/2; state.right.y = HEIGHT/2 - PADDLE_H/2;
+      centerBall(Math.random() < 0.5 ? -1 : 1);
+    }
+
+    function centerBall(dirX = 1){
+      state.ball.x = WIDTH/2; state.ball.y = HEIGHT/2;
+      const angle = (Math.random() * 0.5 - 0.25) * Math.PI/3; // small random angle
+      state.ball.speed = BALL_SPEED_START;
+      state.ball.vx = Math.cos(angle) * state.ball.speed * dirX;
+      state.ball.vy = Math.sin(angle) * state.ball.speed;
+    }
+
+    function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+    function drawCourt(){
+      // background glow is handled by CSS; draw center line and score
+      ctx.clearRect(0,0,WIDTH,HEIGHT);
+
+      // Center dashed line
+      ctx.setLineDash([10, 16]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(WIDTH/2, 14); ctx.lineTo(WIDTH/2, HEIGHT-14);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Scores
+      ctx.fillStyle = '#c7d2fe';
+      ctx.font = '700 48px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(leftScore), WIDTH/2 - 80, 72);
+      ctx.fillText(String(rightScore), WIDTH/2 + 80, 72);
+
+      // Paddles
+      ctx.fillStyle = '#e2e8f0';
+      roundRect(ctx, state.left.x, state.left.y, PADDLE_W, PADDLE_H, 8);
+      roundRect(ctx, state.right.x, state.right.y, PADDLE_W, PADDLE_H, 8);
+
+      // Ball with small glow
+      ctx.shadowColor = 'rgba(94,234,212,0.5)';
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = '#5eead4';
+      ctx.beginPath();
+      ctx.arc(state.ball.x, state.ball.y, BALL_SIZE/2, 0, Math.PI*2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Pause overlay
+      if(!playing){
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(0,0,WIDTH,HEIGHT);
+        ctx.fillStyle = '#e5e7eb';
+        ctx.font = '700 42px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Paused', WIDTH/2, HEIGHT/2 - 8);
+        ctx.font = '500 16px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
+        ctx.fillStyle = '#93c5fd';
+        ctx.fillText('Press Space to resume', WIDTH/2, HEIGHT/2 + 24);
+      }
+    }
+
+    function roundRect(ctx, x, y, w, h, r){
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x+rr, y);
+      ctx.arcTo(x+w, y, x+w, y+h, rr);
+      ctx.arcTo(x+w, y+h, x, y+h, rr);
+      ctx.arcTo(x, y+h, x, y, rr);
+      ctx.arcTo(x, y, x+w, y, rr);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function update(dt){
+      // Player input
+      const u = keys.has('arrowup');
+      const d = keys.has('arrowdown');
+      const w = keys.has('w');
+      const s = keys.has('s');
+
+      // Left paddle (W/S)
+      if (w) state.left.y -= PADDLE_SPEED * dt;
+      if (s) state.left.y += PADDLE_SPEED * dt;
+
+      // Right paddle: human or AI
+      if (twoPlayer) {
+        if (u) state.right.y -= PADDLE_SPEED * dt;
+        if (d) state.right.y += PADDLE_SPEED * dt;
+      } else {
+        // Simple AI aiming to track ball with capped speed
+        const target = state.ball.y - PADDLE_H/2 + (Math.sin(performance.now()/300) * 12);
+        const dy = clamp(target - state.right.y, -PADDLE_SPEED * 0.9 * dt, PADDLE_SPEED * 0.9 * dt);
+        state.right.y += dy;
+      }
+
+      // Clamp paddles
+      state.left.y = clamp(state.left.y, 14, HEIGHT - PADDLE_H - 14);
+      state.right.y = clamp(state.right.y, 14, HEIGHT - PADDLE_H - 14);
+
+      // Move ball
+      state.ball.x += state.ball.vx * dt;
+      state.ball.y += state.ball.vy * dt;
+
+      // Wall collisions (top/bottom)
+      if (state.ball.y < BALL_SIZE/2 + 10 && state.ball.vy < 0) { state.ball.y = BALL_SIZE/2 + 10; state.ball.vy *= -1; beeper.beep(300, 0.03); }
+      if (state.ball.y > HEIGHT - BALL_SIZE/2 - 10 && state.ball.vy > 0) { state.ball.y = HEIGHT - BALL_SIZE/2 - 10; state.ball.vy *= -1; beeper.beep(300, 0.03); }
+
+      // Paddle collisions
+      const bx = state.ball.x, by = state.ball.y, r = BALL_SIZE/2;
+
+      // Left paddle rect
+      if (bx - r < state.left.x + PADDLE_W && bx - r > state.left.x && by > state.left.y && by < state.left.y + PADDLE_H && state.ball.vx < 0) {
+        paddleBounce(state.left);
+      }
+      // Right paddle rect
+      if (bx + r > state.right.x && bx + r < state.right.x + PADDLE_W && by > state.right.y && by < state.right.y + PADDLE_H && state.ball.vx > 0) {
+        paddleBounce(state.right, true);
+      }
+
+      // Scoring
+      if (bx < -20) { rightScore++; beeper.beep(160, 0.10, 'sine', 0.03); pointOver(-1); }
+      if (bx > WIDTH + 20) { leftScore++; beeper.beep(160, 0.10, 'sine', 0.03); pointOver(1); }
+
+      // Win condition
+      if (leftScore >= 11 || rightScore >= 11) {
+        playing = false;
+        // Overlay will show pause text; also display winner
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillRect(0,0,WIDTH,HEIGHT);
+        ctx.fillStyle = '#e5e7eb';
+        ctx.font = '700 42px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
+        ctx.textAlign = 'center';
+        const winner = leftScore > rightScore ? 'Left Player Wins!' : 'Right Player Wins!';
+        ctx.fillText(winner, WIDTH/2, HEIGHT/2 - 8);
+        ctx.font = '500 16px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
+        ctx.fillStyle = '#93c5fd';
+        ctx.fillText('Press Reset to play again', WIDTH/2, HEIGHT/2 + 24);
+      }
+    }
+
+    function paddleBounce(paddle, isRight = false){
+      // contact point relative to paddle center -> change angle
+      const rel = (state.ball.y - (paddle.y + PADDLE_H/2)) / (PADDLE_H/2); // -1..1
+      const maxAngle = 0.9; // radians (~51deg)
+      const angle = rel * maxAngle;
+      state.ball.speed = Math.min(state.ball.speed * BALL_ACCEL, BALL_SPEED_MAX);
+      const dir = isRight ? -1 : 1;
+      state.ball.vx = Math.cos(angle) * state.ball.speed * dir;
+      state.ball.vy = Math.sin(angle) * state.ball.speed;
+      // Nudge ball outside paddle to avoid sticking
+      state.ball.x = isRight ? paddle.x - BALL_SIZE/2 - 1 : paddle.x + PADDLE_W + BALL_SIZE/2 + 1;
+      beeper.beep(520, 0.04);
+    }
+
+    function pointOver(dir){
+      if (leftScore >= 11 || rightScore >= 11) return; // someone already won
+      centerBall(dir);
+      // small serve delay
+      playing = false;
+      setTimeout(() => { playing = true; }, 600);
+    }
+
+    // Main loop with delta time
+    let last = performance.now();
+    function loop(now){
+      const dt = Math.min(0.033, (now - last) / 1000); // clamp dt to avoid jumps
+      last = now;
+      if (playing) update(dt);
+      drawCourt();
+      requestAnimationFrame(loop);
+    }
+
+    // Kickoff
+    centerBall(Math.random() < 0.5 ? 1 : -1);
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
