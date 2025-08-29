@@ -1,0 +1,242 @@
+import java.sql.*;
+import java.util.Scanner;
+
+class DBConnection {
+    private static final String URL = "jdbc:mysql://localhost:3306/librarydb";
+    private static final String USER = "root";   // change if needed
+    private static final String PASS = "";       // set your password
+
+    public static Connection getConnection() throws SQLException {
+        return DriverManager.getConnection(URL, USER, PASS);
+    }
+}
+
+class LibraryDB {
+
+    // Add Book
+    public void addBook(int id, String title, String author) {
+        String sql = "INSERT INTO books (id, title, author, isAvailable) VALUES (?, ?, ?, TRUE)";
+        try (Connection conn = DBConnection.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, id);
+            ps.setString(2, title);
+            ps.setString(3, author);
+            ps.executeUpdate();
+            System.out.println("Book added successfully.");
+        } catch (SQLException e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+    }
+
+    // Remove Book
+    public void removeBook(int id) {
+        String sql = "DELETE FROM books WHERE id=?";
+        try (Connection conn = DBConnection.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, id);
+            ps.executeUpdate();
+            System.out.println("Book removed successfully.");
+        } catch (SQLException e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+    }
+
+    // Register User
+    public void registerUser(int id, String name) {
+        String sql = "INSERT INTO users (id, name) VALUES (?, ?)";
+        try (Connection conn = DBConnection.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, id);
+            ps.setString(2, name);
+            ps.executeUpdate();
+            System.out.println("User registered successfully.");
+        } catch (SQLException e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+    }
+
+    // Remove User
+    public void removeUser(int id) {
+        String sql = "DELETE FROM users WHERE id=?";
+        try (Connection conn = DBConnection.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, id);
+            ps.executeUpdate();
+            System.out.println("User removed successfully.");
+        } catch (SQLException e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+    }
+
+    // Borrow Book
+    public void borrowBook(int userId, int bookId) {
+        String check = "SELECT isAvailable FROM books WHERE id=?";
+        String borrow = "INSERT INTO borrow_records (user_id, book_id) VALUES (?, ?)";
+        String update = "UPDATE books SET isAvailable=FALSE WHERE id=?";
+
+        try (Connection conn = DBConnection.getConnection()) {
+            PreparedStatement psCheck = conn.prepareStatement(check);
+            psCheck.setInt(1, bookId);
+            ResultSet rs = psCheck.executeQuery();
+
+            if (rs.next() && rs.getBoolean("isAvailable")) {
+                PreparedStatement psBorrow = conn.prepareStatement(borrow);
+                psBorrow.setInt(1, userId);
+                psBorrow.setInt(2, bookId);
+                psBorrow.executeUpdate();
+
+                PreparedStatement psUpdate = conn.prepareStatement(update);
+                psUpdate.setInt(1, bookId);
+                psUpdate.executeUpdate();
+
+                System.out.println("Book borrowed successfully.");
+            } else {
+                System.out.println("Book not available.");
+            }
+        } catch (SQLException e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+    }
+
+    // Return Book
+    public void returnBook(int userId, int bookId) {
+        String sqlUpdateRecord = "UPDATE borrow_records SET return_date=NOW() WHERE user_id=? AND book_id=? AND return_date IS NULL";
+        String sqlUpdateBook = "UPDATE books SET isAvailable=TRUE WHERE id=?";
+
+        try (Connection conn = DBConnection.getConnection()) {
+            PreparedStatement ps1 = conn.prepareStatement(sqlUpdateRecord);
+            ps1.setInt(1, userId);
+            ps1.setInt(2, bookId);
+            int rows = ps1.executeUpdate();
+
+            if (rows > 0) {
+                PreparedStatement ps2 = conn.prepareStatement(sqlUpdateBook);
+                ps2.setInt(1, bookId);
+                ps2.executeUpdate();
+                System.out.println("Book returned successfully.");
+            } else {
+                System.out.println("No active borrow record found.");
+            }
+        } catch (SQLException e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+    }
+
+    // Search Books
+    public void searchBook(String keyword) {
+        String sql = "SELECT * FROM books WHERE title LIKE ? OR author LIKE ?";
+        try (Connection conn = DBConnection.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, "%" + keyword + "%");
+            ps.setString(2, "%" + keyword + "%");
+            ResultSet rs = ps.executeQuery();
+
+            while (rs.next()) {
+                System.out.println(rs.getInt("id") + " - " + rs.getString("title") + " by " + rs.getString("author")
+                        + (rs.getBoolean("isAvailable") ? " (Available)" : " (Borrowed)"));
+            }
+        } catch (SQLException e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+    }
+
+    // List Books
+    public void listBooks() {
+        String sql = "SELECT * FROM books";
+        try (Connection conn = DBConnection.getConnection(); Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(sql);
+            while (rs.next()) {
+                System.out.println(rs.getInt("id") + " - " + rs.getString("title") + " by " + rs.getString("author")
+                        + (rs.getBoolean("isAvailable") ? " (Available)" : " (Borrowed)"));
+            }
+        } catch (SQLException e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+    }
+
+    // List Users
+    public void listUsers() {
+        String sql = "SELECT * FROM users";
+        try (Connection conn = DBConnection.getConnection(); Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(sql);
+            while (rs.next()) {
+                System.out.println(rs.getInt("id") + " - " + rs.getString("name"));
+            }
+        } catch (SQLException e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+    }
+}
+
+public class LibraryManagementSystemJDBC {
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+        LibraryDB library = new LibraryDB();
+
+        while (true) {
+            System.out.println("\n=== Library Menu (MySQL) ===");
+            System.out.println("1. Add Book");
+            System.out.println("2. Remove Book");
+            System.out.println("3. Register User");
+            System.out.println("4. Remove User");
+            System.out.println("5. Borrow Book");
+            System.out.println("6. Return Book");
+            System.out.println("7. Search Book");
+            System.out.println("8. List Books");
+            System.out.println("9. List Users");
+            System.out.println("0. Exit");
+            System.out.print("Choose: ");
+
+            int choice = sc.nextInt();
+            sc.nextLine();
+
+            switch (choice) {
+                case 1 -> {
+                    System.out.print("Enter Book ID: ");
+                    int id = sc.nextInt(); sc.nextLine();
+                    System.out.print("Enter Title: ");
+                    String title = sc.nextLine();
+                    System.out.print("Enter Author: ");
+                    String author = sc.nextLine();
+                    library.addBook(id, title, author);
+                }
+                case 2 -> {
+                    System.out.print("Enter Book ID: ");
+                    library.removeBook(sc.nextInt());
+                }
+                case 3 -> {
+                    System.out.print("Enter User ID: ");
+                    int id = sc.nextInt(); sc.nextLine();
+                    System.out.print("Enter Name: ");
+                    String name = sc.nextLine();
+                    library.registerUser(id, name);
+                }
+                case 4 -> {
+                    System.out.print("Enter User ID: ");
+                    library.removeUser(sc.nextInt());
+                }
+                case 5 -> {
+                    System.out.print("Enter User ID: ");
+                    int uid = sc.nextInt();
+                    System.out.print("Enter Book ID: ");
+                    int bid = sc.nextInt();
+                    library.borrowBook(uid, bid);
+                }
+                case 6 -> {
+                    System.out.print("Enter User ID: ");
+                    int uid = sc.nextInt();
+                    System.out.print("Enter Book ID: ");
+                    int bid = sc.nextInt();
+                    library.returnBook(uid, bid);
+                }
+                case 7 -> {
+                    System.out.print("Enter keyword: ");
+                    String keyword = sc.nextLine();
+                    library.searchBook(keyword);
+                }
+                case 8 -> library.listBooks();
+                case 9 -> library.listUsers();
+                case 0 -> {
+                    System.out.println("Exiting...");
+                    return;
+                }
+                default -> System.out.println("Invalid choice!");
+            }
+        }
+    }
+}
