@@ -1,0 +1,217 @@
+import java.util.*;
+
+class Book {
+    private int id;
+    private String title;
+    private String author;
+    private boolean isAvailable;
+
+    public Book(int id, String title, String author) {
+        this.id = id;
+        this.title = title;
+        this.author = author;
+        this.isAvailable = true;
+    }
+
+    public int getId() { return id; }
+    public String getTitle() { return title; }
+    public String getAuthor() { return author; }
+    public boolean isAvailable() { return isAvailable; }
+    public void borrowBook() { isAvailable = false; }
+    public void returnBook() { isAvailable = true; }
+
+    @Override
+    public String toString() {
+        return id + " - " + title + " by " + author + (isAvailable ? " (Available)" : " (Borrowed)");
+    }
+}
+
+class User {
+    private int id;
+    private String name;
+    private List<Book> borrowedBooks;
+
+    public User(int id, String name) {
+        this.id = id;
+        this.name = name;
+        this.borrowedBooks = new ArrayList<>();
+    }
+
+    public int getId() { return id; }
+    public String getName() { return name; }
+    public List<Book> getBorrowedBooks() { return borrowedBooks; }
+
+    public void borrowBook(Book book) {
+        borrowedBooks.add(book);
+    }
+
+    public void returnBook(Book book) {
+        borrowedBooks.remove(book);
+    }
+
+    @Override
+    public String toString() {
+        return id + " - " + name + " | Borrowed: " + borrowedBooks.size() + " books";
+    }
+}
+
+class Library {
+    private Map<Integer, Book> books = new HashMap<>();
+    private Map<Integer, User> users = new HashMap<>();
+
+    // Add book
+    public void addBook(Book book) {
+        books.put(book.getId(), book);
+    }
+
+    // Remove book
+    public void removeBook(int bookId) {
+        books.remove(bookId);
+    }
+
+    // Register user
+    public void registerUser(User user) {
+        users.put(user.getId(), user);
+    }
+
+    // Remove user
+    public void removeUser(int userId) {
+        users.remove(userId);
+    }
+
+    // Borrow book
+    public boolean borrowBook(int userId, int bookId) {
+        User user = users.get(userId);
+        Book book = books.get(bookId);
+
+        if (user != null && book != null && book.isAvailable()) {
+            book.borrowBook();
+            user.borrowBook(book);
+            return true;
+        }
+        return false;
+    }
+
+    // Return book
+    public boolean returnBook(int userId, int bookId) {
+        User user = users.get(userId);
+        Book book = books.get(bookId);
+
+        if (user != null && book != null && !book.isAvailable()) {
+            book.returnBook();
+            user.returnBook(book);
+            return true;
+        }
+        return false;
+    }
+
+    // Search book
+    public void searchBook(String keyword) {
+        for (Book book : books.values()) {
+            if (book.getTitle().toLowerCase().contains(keyword.toLowerCase()) ||
+                book.getAuthor().toLowerCase().contains(keyword.toLowerCase())) {
+                System.out.println(book);
+            }
+        }
+    }
+
+    // Display all books
+    public void listBooks() {
+        books.values().forEach(System.out::println);
+    }
+
+    // Display all users
+    public void listUsers() {
+        users.values().forEach(System.out::println);
+    }
+}
+
+public class LibraryManagementSystem {
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+        Library library = new Library();
+
+        // Sample Data
+        library.addBook(new Book(1, "The Hobbit", "J.R.R. Tolkien"));
+        library.addBook(new Book(2, "1984", "George Orwell"));
+        library.registerUser(new User(101, "Alice"));
+        library.registerUser(new User(102, "Bob"));
+
+        while (true) {
+            System.out.println("\n=== Library Menu ===");
+            System.out.println("1. Add Book");
+            System.out.println("2. Remove Book");
+            System.out.println("3. Register User");
+            System.out.println("4. Remove User");
+            System.out.println("5. Borrow Book");
+            System.out.println("6. Return Book");
+            System.out.println("7. Search Book");
+            System.out.println("8. List Books");
+            System.out.println("9. List Users");
+            System.out.println("0. Exit");
+            System.out.print("Choose: ");
+
+            int choice = sc.nextInt();
+            sc.nextLine();
+
+            switch (choice) {
+                case 1 -> {
+                    System.out.print("Enter Book ID: ");
+                    int id = sc.nextInt(); sc.nextLine();
+                    System.out.print("Enter Title: ");
+                    String title = sc.nextLine();
+                    System.out.print("Enter Author: ");
+                    String author = sc.nextLine();
+                    library.addBook(new Book(id, title, author));
+                }
+                case 2 -> {
+                    System.out.print("Enter Book ID: ");
+                    library.removeBook(sc.nextInt());
+                }
+                case 3 -> {
+                    System.out.print("Enter User ID: ");
+                    int id = sc.nextInt(); sc.nextLine();
+                    System.out.print("Enter Name: ");
+                    String name = sc.nextLine();
+                    library.registerUser(new User(id, name));
+                }
+                case 4 -> {
+                    System.out.print("Enter User ID: ");
+                    library.removeUser(sc.nextInt());
+                }
+                case 5 -> {
+                    System.out.print("Enter User ID: ");
+                    int uid = sc.nextInt();
+                    System.out.print("Enter Book ID: ");
+                    int bid = sc.nextInt();
+                    if (library.borrowBook(uid, bid))
+                        System.out.println("Book borrowed successfully!");
+                    else
+                        System.out.println("Borrow failed.");
+                }
+                case 6 -> {
+                    System.out.print("Enter User ID: ");
+                    int uid = sc.nextInt();
+                    System.out.print("Enter Book ID: ");
+                    int bid = sc.nextInt();
+                    if (library.returnBook(uid, bid))
+                        System.out.println("Book returned successfully!");
+                    else
+                        System.out.println("Return failed.");
+                }
+                case 7 -> {
+                    System.out.print("Enter keyword: ");
+                    String keyword = sc.nextLine();
+                    library.searchBook(keyword);
+                }
+                case 8 -> library.listBooks();
+                case 9 -> library.listUsers();
+                case 0 -> {
+                    System.out.println("Exiting...");
+                    return;
+                }
+                default -> System.out.println("Invalid choice!");
+            }
+        }
+    }
+}
