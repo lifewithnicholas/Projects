@@ -1,0 +1,10 @@
+data_viz_project/
+│── data/                # place datasets here
+│── visuals/             # auto-generated charts saved here
+│── src/
+│   ├── __init__.py
+│   ├── data_loader.py   # functions to load data
+│   ├── visualizer.py    # plotting functions
+│   └── main.py          # main entry point
+│── requirements.txt
+│── README.md
