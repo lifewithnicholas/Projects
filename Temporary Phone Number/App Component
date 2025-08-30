@@ -1,0 +1,62 @@
+import React, { useState } from 'react';
+import { View, Text, Button, TextInput } from 'react-native';
+import axios from 'axios';
+import firebase from 'firebase';
+import PushNotification from 'react-native-push-notification';
+
+// Firebase Config
+const firebaseConfig = {
+  apiKey: 'YOUR_API_KEY',
+  authDomain: 'YOUR_PROJECT_ID.firebaseapp.com',
+  databaseURL: 'https://YOUR_PROJECT_ID.firebaseio.com',
+  projectId: 'YOUR_PROJECT_ID',
+  storageBucket: 'YOUR_PROJECT_ID.appspot.com',
+  messagingSenderId: 'YOUR_MESSAGING_SENDER_ID',
+  appId: 'YOUR_APP_ID',
+  measurementId: 'YOUR_MEASUREMENT_ID',
+};
+
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+}
+
+PushNotification.configure({
+  onNotification: function (notification) {
+    console.log('Notification:', notification);
+  },
+});
+
+export default function App() {
+  const [userId, setUserId] = useState('');
+  const [expiry, setExpiry] = useState('');
+  const [tempNumber, setTempNumber] = useState('');
+
+  const createTempNumber = async () => {
+    try {
+      const response = await axios.post('http://your-backend-url/create-temp-number', {
+        userId,
+        expiryInHours: parseInt(expiry),
+      });
+      setTempNumber(response.data.tempNumber);
+    } catch (error) {
+      console.error('Error creating temporary number:', error);
+    }
+  };
+
+  return (
+    <View>
+      <TextInput
+        placeholder="Enter User ID"
+        value={userId}
+        onChangeText={setUserId}
+      />
+      <TextInput
+        placeholder="Enter Expiry in Hours"
+        value={expiry}
+        onChangeText={setExpiry}
+      />
+      <Button title="Create Temp Number" onPress={createTempNumber} />
+      {tempNumber && <Text>Temporary Number: {tempNumber}</Text>}
+    </View>
+  );
+}
