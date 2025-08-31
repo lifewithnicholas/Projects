@@ -1,0 +1,1 @@
+python bot.py backtest --exchange binance --symbol BTC/USDT --timeframe 5m --days 14
